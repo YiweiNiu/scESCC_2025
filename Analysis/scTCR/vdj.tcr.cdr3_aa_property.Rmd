@@ -1,0 +1,1231 @@
+---
+title: "vdj.tcr.cdr3_aa_property"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r knitr, include = FALSE}
+DOCNAME = "vdj.tcr.cdr3_aa_property"
+#dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+    if (before) {
+        print(paste("Start:", Sys.time()))
+        NOW <<- Sys.time()
+    } else {
+        print(paste("Stop:", Sys.time()))
+        print(Sys.time() - NOW)
+    }
+})
+
+knitr::opts_chunk$set(
+    autodep        = TRUE,
+    cache          = TRUE,
+    cache.path     = paste0("cache/", DOCNAME, "/"),
+    cache.lazy     = FALSE, 
+    cache.comments = FALSE,
+    echo           = TRUE,
+    error          = FALSE,
+    fig.align      = "center",
+    fig.width      = 10,
+    fig.height     = 8,
+    message        = FALSE,
+    warning        = FALSE,
+    timeit         = TRUE
+)
+```
+
+Load packages
+
+```{r libaries, cache = FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(patchwork)
+library(cowplot)
+library(ComplexHeatmap)
+library(pheatmap)
+library(ggpubr)
+library(ggrepel)
+library(ggcorrplot)
+library(circlize)
+theme_set(theme_cowplot())
+
+# rigde
+library(ggridges)
+
+# color
+library(ggsci)
+library(RColorBrewer)
+
+# VDJ
+library(alakazam)
+```
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+devtools::load_all('/T02Data/niuyw1/Rscir')
+```
+
+分析 TCR CDR3 区域的氨基酸性质
+
+## Set up
+
+Load data
+
+```{r load-data, cache=FALSE, message=FALSE, warning=FALSE}
+metadata = read_csv(here::here("output/04.rm_cells/seurat_tcells.cellmeta.csv"))
+clones = read_csv('/niuyw-usb-disk/Projects/scESCA/cellranger/TCR/200121_6samples.clonotype_tcr.csv')
+```
+
+## Neat data
+
+Merge metadata with clonotypes
+
+```{r merge-meta-clonotypes}
+clones = clones %>%
+  filter(clonotype != 'None') %>%  # cells with alpha-beta pair
+  mutate(clonotype_size = as.numeric(clonotype_size)) %>%
+  mutate(clonal_expansion = case_when(
+    clonotype_size == 1 ~ 'No',
+    TRUE ~ 'Clonal'
+  ))
+
+d_4_p = metadata %>%
+  left_join(clones, by = 'barcode') %>%
+  filter(!is.na(clonotype)) %>%
+  mutate(seurat_clusters = as.factor(seurat_clusters)) %>%
+  mutate(Tissue = factor(Tissue, levels = c("PBMC", "LN", "Normal", "Adjacent", "Tumor"))) %>%
+  mutate(Origin = factor(Origin, levels = c("PBMC1", "PBMC2",
+                                            'LN-LR', 'LN-RR', 'LN-UTP1', 'LN-UTP2', 'LN-ITP',
+                                            'LN-LTP', 'LN-LP', 'LN-LP1', 'LN-LP2', 'LN-LG',
+                                            "Normal", "Adjacent",
+                                            "Tumor_core", "Tumor_invasion", "Tumor_middle"))) %>%
+  mutate(Metastasis = factor(Metastasis, levels = c("None", "N", "P")))
+
+head(d_4_p)
+```
+
+## TRA Amino acid property analysis {.tabset}
+
+```{r TRA-amino-acid}
+tra_aa_props <- aminoAcidProperties(d_4_p, seq="TRA_cdr3", nt=F, trim=F, label="cdr3")
+```
+
+### CDR3 length {.tabset}
+
+#### Cluster
+
+```{r TRA-amino-acid-cdr3-len-Cluster, fig.width=10, fig.height=5}
+ggplot(tra_aa_props, aes(x=reorder(seurat_clusters, cdr3_aa_length, median),
+                         y=cdr3_aa_length, fill=seurat_clusters)) +
+  labs(x='Cluster', y='Amino acids', title='CDR3 length') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = cluster_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Tissue
+
+```{r TRA-amino-acid-cdr3-len-Tissue, fig.width=6, fig.height=5}
+ggplot(tra_aa_props, aes(x=Tissue, y=cdr3_aa_length, fill=Tissue)) +
+  labs(x='Tissue', y='Amino acids', title='CDR3 length') +
+  geom_violin(trim=F, adjust=2) +
+  geom_boxplot(width=.1, fill="black", outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('LN', 'Normal'),
+                                        c('Normal', 'Adjacent'),
+                                        c('Adjacent', 'Tumor'),
+                                        c('Normal', 'Tumor')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = tissue_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Orgin
+
+```{r TRA-amino-acid-cdr3-len-Orgin, fig.width=10, fig.height=5}
+ggplot(tra_aa_props, aes(x=reorder(Origin, cdr3_aa_length, median),
+                         y=cdr3_aa_length, fill=Origin)) +
+  labs(x='Origin', y='Amino acids', title='CDR3 length') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = origin_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Metastasis
+
+```{r TRA-amino-acid-cdr3-len-Metastasis, fig.width=5, fig.height=5}
+ggplot(tra_aa_props, aes(x=Metastasis,
+                         y=cdr3_aa_length, fill=Metastasis)) +
+  labs(x='Origin', y='Amino acids', title='CDR3 length') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('N', 'P')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = metastasis_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+### CDR3 hydrophobicity {.tabset}
+
+#### Cluster
+
+```{r TRA-amino-acid-cdr3-hydrophobicity-Cluster, fig.width=10, fig.height=5}
+ggplot(tra_aa_props, aes(x=reorder(seurat_clusters, cdr3_aa_gravy, median),
+                         y=cdr3_aa_gravy, fill=seurat_clusters)) +
+  labs(x='Cluster', y='GRAVY', title='CDR3 hydrophobicity') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = cluster_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Tissue
+
+```{r TRA-amino-acid-cdr3-hydrophobicity-Tissue, fig.width=6, fig.height=5}
+ggplot(tra_aa_props, aes(x=Tissue, y=cdr3_aa_gravy, fill=Tissue)) +
+  labs(x='Tissue', y='GRAVY', title='CDR3 hydrophobicity') +
+  geom_violin(trim=F, adjust=2) +
+  geom_boxplot(width=.1, fill="black", outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('LN', 'Normal'),
+                                        c('Normal', 'Adjacent'),
+                                        c('Adjacent', 'Tumor'),
+                                        c('Normal', 'Tumor')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = tissue_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Orgin
+
+```{r TRA-amino-acid-cdr3-hydrophobicity-Orgin, fig.width=10, fig.height=5}
+ggplot(tra_aa_props, aes(x=reorder(Origin, cdr3_aa_gravy, median),
+                         y=cdr3_aa_gravy, fill=Origin)) +
+  labs(x='Origin', y='GRAVY', title='CDR3 hydrophobicity') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = origin_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Metastasis
+
+```{r TRA-amino-acid-cdr3-hydrophobicity-Metastasis, fig.width=5, fig.height=5}
+ggplot(tra_aa_props, aes(x=Metastasis,
+                         y=cdr3_aa_gravy, fill=Metastasis)) +
+  labs(x='Origin', y='GRAVY', title='CDR3 hydrophobicity') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('N', 'P')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = metastasis_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+### CDR3 bulkiness
+
+#### Cluster
+
+```{r TRA-amino-acid-cdr3-bulkiness-Cluster, fig.width=10, fig.height=5}
+ggplot(tra_aa_props, aes(x=reorder(seurat_clusters, cdr3_aa_bulk, median),
+                         y=cdr3_aa_bulk, fill=seurat_clusters)) +
+  labs(x='Cluster', y='Bulkiness', title='CDR3 Bulkiness') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = cluster_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Tissue
+
+```{r TRA-amino-acid-cdr3-bulkiness-Tissue, fig.width=6, fig.height=5}
+ggplot(tra_aa_props, aes(x=Tissue, y=cdr3_aa_bulk, fill=Tissue)) +
+  labs(x='Tissue', y='Bulkiness', title='CDR3 Bulkiness') +
+  geom_violin(trim=F, adjust=2) +
+  geom_boxplot(width=.1, fill="black", outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('LN', 'Normal'),
+                                        c('Normal', 'Adjacent'),
+                                        c('Adjacent', 'Tumor'),
+                                        c('Normal', 'Tumor')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = tissue_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Orgin
+
+```{r TRA-amino-acid-cdr3-bulkiness-Orgin, fig.width=10, fig.height=5}
+ggplot(tra_aa_props, aes(x=reorder(Origin, cdr3_aa_bulk, median),
+                         y=cdr3_aa_bulk, fill=Origin)) +
+  labs(x='Origin', y='Bulkiness', title='CDR3 Bulkiness') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = origin_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Metastasis
+
+```{r TRA-amino-acid-cdr3-bulkiness-Metastasis, fig.width=5, fig.height=5}
+ggplot(tra_aa_props, aes(x=Metastasis,
+                         y=cdr3_aa_bulk, fill=Metastasis)) +
+  labs(x='Origin', y='Bulkiness', title='CDR3 Bulkiness') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('N', 'P')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = metastasis_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+### CDR3 polarity
+
+#### Cluster
+
+```{r TRA-amino-acid-cdr3-polarity-Cluster, fig.width=10, fig.height=5}
+ggplot(tra_aa_props, aes(x=reorder(seurat_clusters, cdr3_aa_polarity, median),
+                         y=cdr3_aa_polarity, fill=seurat_clusters)) +
+  labs(x='Cluster', y='Polarity', title='CDR3 polarity') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = cluster_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Tissue
+
+```{r TRA-amino-acid-cdr3-polarity-Tissue, fig.width=6, fig.height=5}
+ggplot(tra_aa_props, aes(x=Tissue, y=cdr3_aa_polarity, fill=Tissue)) +
+  labs(x='Tissue', y='Polarity', title='CDR3 polarity') +
+  geom_violin(trim=F, adjust=2) +
+  geom_boxplot(width=.1, fill="black", outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('LN', 'Normal'),
+                                        c('Normal', 'Adjacent'),
+                                        c('Adjacent', 'Tumor'),
+                                        c('Normal', 'Tumor')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = tissue_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Orgin
+
+```{r TRA-amino-acid-cdr3-polarity-Orgin, fig.width=10, fig.height=5}
+ggplot(tra_aa_props, aes(x=reorder(Origin, cdr3_aa_polarity, median),
+                         y=cdr3_aa_polarity, fill=Origin)) +
+  labs(x='Origin', y='Polarity', title='CDR3 polarity') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = origin_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Metastasis
+
+```{r TRA-amino-acid-cdr3-polarity-Metastasis, fig.width=5, fig.height=5}
+ggplot(tra_aa_props, aes(x=Metastasis,
+                         y=cdr3_aa_polarity, fill=Metastasis)) +
+  labs(x='Origin', y='Polarity', title='CDR3 polarity') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('N', 'P')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = metastasis_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+### CDR3 net charge
+
+#### Cluster
+
+```{r TRA-amino-acid-cdr3-charge-Cluster, fig.width=10, fig.height=5}
+ggplot(tra_aa_props, aes(x=reorder(seurat_clusters, cdr3_aa_charge, median),
+                         y=cdr3_aa_charge, fill=seurat_clusters)) +
+  labs(x='Cluster', y='Net charge', title='CDR3 net charge') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = cluster_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Tissue
+
+```{r TRA-amino-acid-cdr3-charge-Tissue, fig.width=6, fig.height=5}
+ggplot(tra_aa_props, aes(x=Tissue, y=cdr3_aa_charge, fill=Tissue)) +
+  labs(x='Tissue', y='Net charge', title='CDR3 net charge') +
+  geom_violin(trim=F, adjust=2) +
+  geom_boxplot(width=.1, fill="black", outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('LN', 'Normal'),
+                                        c('Normal', 'Adjacent'),
+                                        c('Adjacent', 'Tumor'),
+                                        c('Normal', 'Tumor')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = tissue_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Orgin
+
+```{r TRA-amino-acid-cdr3-charge-Orgin, fig.width=10, fig.height=5}
+ggplot(tra_aa_props, aes(x=reorder(Origin, cdr3_aa_charge, median),
+                         y=cdr3_aa_charge, fill=Origin)) +
+  labs(x='Origin', y='Net charge', title='CDR3 net charge') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = origin_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Metastasis
+
+```{r TRA-amino-acid-cdr3-charge-Metastasis, fig.width=5, fig.height=5}
+ggplot(tra_aa_props, aes(x=Metastasis,
+                         y=cdr3_aa_charge, fill=Metastasis)) +
+  labs(x='Origin', y='Net charge', title='CDR3 net charge') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('N', 'P')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = metastasis_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+### CDR3 basic residues {.tabset}
+
+#### Cluster
+
+```{r TRA-amino-acid-cdr3-residues-Cluster, fig.width=10, fig.height=5}
+ggplot(tra_aa_props, aes(x=reorder(seurat_clusters, cdr3_aa_basic, median),
+                         y=cdr3_aa_basic, fill=seurat_clusters)) +
+  labs(x='Cluster', y='Basic residues', title='CDR3 basic residues') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = cluster_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Tissue
+
+```{r TRA-amino-acid-cdr3-residues-Tissue, fig.width=6, fig.height=5}
+ggplot(tra_aa_props, aes(x=Tissue, y=cdr3_aa_basic, fill=Tissue)) +
+  labs(x='Tissue', y='Basic residues', title='CDR3 basic residues') +
+  geom_violin(trim=F, adjust=2) +
+  geom_boxplot(width=.1, fill="black", outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('LN', 'Normal'),
+                                        c('Normal', 'Adjacent'),
+                                        c('Adjacent', 'Tumor'),
+                                        c('Normal', 'Tumor')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = tissue_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Orgin
+
+```{r TRA-amino-acid-cdr3-residues-Orgin, fig.width=10, fig.height=5}
+ggplot(tra_aa_props, aes(x=reorder(Origin, cdr3_aa_basic, median),
+                         y=cdr3_aa_basic, fill=Origin)) +
+  labs(x='Origin', y='Basic residues', title='CDR3 basic residues') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = origin_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Metastasis
+
+```{r TRA-amino-acid-cdr3-residues-Metastasis, fig.width=5, fig.height=5}
+ggplot(tra_aa_props, aes(x=Metastasis,
+                         y=cdr3_aa_basic, fill=Metastasis)) +
+  labs(x='Origin', y='Basic residues', title='CDR3 basic residues') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('N', 'P')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = metastasis_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+### CDR3 acidic residues {.tabset}
+
+#### Cluster
+
+```{r TRA-amino-acid-cdr3-acidic-residues-Cluster, fig.width=10, fig.height=5}
+ggplot(tra_aa_props, aes(x=reorder(seurat_clusters, cdr3_aa_acidic, median),
+                         y=cdr3_aa_acidic, fill=seurat_clusters)) +
+  labs(x='Cluster', y='Acidic residues', title='CDR3 acidic residues') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = cluster_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Tissue
+
+```{r TRA-amino-acid-cdr3-acidic-residues-Tissue, fig.width=6, fig.height=5}
+ggplot(tra_aa_props, aes(x=Tissue, y=cdr3_aa_acidic, fill=Tissue)) +
+  labs(x='Tissue', y='Acidic residues', title='CDR3 acidic residues') +
+  geom_violin(trim=F, adjust=2) +
+  geom_boxplot(width=.1, fill="black", outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('LN', 'Normal'),
+                                        c('Normal', 'Adjacent'),
+                                        c('Adjacent', 'Tumor'),
+                                        c('Normal', 'Tumor')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = tissue_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Orgin
+
+```{r TRA-amino-acid-cdr3-acidic-residues-Orgin, fig.width=10, fig.height=5}
+ggplot(tra_aa_props, aes(x=reorder(Origin, cdr3_aa_acidic, median),
+                         y=cdr3_aa_acidic, fill=Origin)) +
+  labs(x='Origin', y='Acidic residues', title='CDR3 acidic residues') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = origin_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Metastasis
+
+```{r TRA-amino-acid-cdr3-acidic-residues-Metastasis, fig.width=5, fig.height=5}
+ggplot(tra_aa_props, aes(x=Metastasis,
+                         y=cdr3_aa_acidic, fill=Metastasis)) +
+  labs(x='Origin', y='Acidic residues', title='CDR3 acidic residues') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('N', 'P')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = metastasis_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+### CDR3 aromatic
+
+#### Cluster
+
+```{r TRA-amino-acid-cdr3-aromatic-Cluster, fig.width=10, fig.height=5}
+ggplot(tra_aa_props, aes(x=reorder(seurat_clusters, cdr3_aa_aromatic, median),
+                         y=cdr3_aa_aromatic, fill=seurat_clusters)) +
+  labs(x='Cluster', y='Aromatic', title='CDR3 aromatic') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = cluster_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Tissue
+
+```{r TRA-amino-acid-cdr3-aromatic-Tissue, fig.width=6, fig.height=5}
+ggplot(tra_aa_props, aes(x=Tissue, y=cdr3_aa_aromatic, fill=Tissue)) +
+  labs(x='Tissue', y='Aromatic', title='CDR3 aromatic') +
+  geom_violin(trim=F, adjust=2) +
+  geom_boxplot(width=.1, fill="black", outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('LN', 'Normal'),
+                                        c('Normal', 'Adjacent'),
+                                        c('Adjacent', 'Tumor'),
+                                        c('Normal', 'Tumor')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = tissue_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Orgin
+
+```{r TRA-amino-acid-cdr3-aromatic-Orgin, fig.width=10, fig.height=5}
+ggplot(tra_aa_props, aes(x=reorder(Origin, cdr3_aa_aromatic, median),
+                         y=cdr3_aa_aromatic, fill=Origin)) +
+  labs(x='Origin', y='Aromatic', title='CDR3 aromatic') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = origin_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Metastasis
+
+```{r TRA-amino-acid-cdr3-aromatic-Metastasis, fig.width=5, fig.height=5}
+ggplot(tra_aa_props, aes(x=Metastasis,
+                         y=cdr3_aa_aromatic, fill=Metastasis)) +
+  labs(x='Origin', y='Aromatic', title='CDR3 aromatic') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('N', 'P')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = metastasis_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+### CDR3 aliphatic index
+
+#### Cluster
+
+```{r TRA-amino-acid-cdr3-aliphatic-index-Cluster, fig.width=10, fig.height=5}
+ggplot(tra_aa_props, aes(x=reorder(seurat_clusters, cdr3_aa_aliphatic, median),
+                         y=cdr3_aa_aliphatic, fill=seurat_clusters)) +
+  labs(x='Cluster', y='Aliphatic index', title='CDR3 aliphatic index') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = cluster_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Tissue
+
+```{r TRA-amino-acid-cdr3-aliphatic-index-Tissue, fig.width=6, fig.height=5}
+ggplot(tra_aa_props, aes(x=Tissue, y=cdr3_aa_aliphatic, fill=Tissue)) +
+  labs(x='Tissue', y='Aliphatic index', title='CDR3 aliphatic index') +
+  geom_violin(trim=F, adjust=2) +
+  geom_boxplot(width=.1, fill="black", outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('LN', 'Normal'),
+                                        c('Normal', 'Adjacent'),
+                                        c('Adjacent', 'Tumor'),
+                                        c('Normal', 'Tumor')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = tissue_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Orgin
+
+```{r TRA-amino-acid-cdr3-aliphatic-index-Orgin, fig.width=10, fig.height=5}
+ggplot(tra_aa_props, aes(x=reorder(Origin, cdr3_aa_aliphatic, median),
+                         y=cdr3_aa_aliphatic, fill=Origin)) +
+  labs(x='Origin', y='Aliphatic index', title='CDR3 aliphatic index') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = origin_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Metastasis
+
+```{r TRA-amino-acid-cdr3-aliphatic-index-Metastasis, fig.width=5, fig.height=5}
+ggplot(tra_aa_props, aes(x=Metastasis,
+                         y=cdr3_aa_aliphatic, fill=Metastasis)) +
+  labs(x='Origin', y='Aliphatic index', title='CDR3 aliphatic index') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('N', 'P')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = metastasis_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+## TRB Amino acid property analysis {.tabset}
+
+```{r TRB-amino-acid}
+trb_aa_props <- aminoAcidProperties(d_4_p, seq="TRB_cdr3", nt=F, trim=F, label="cdr3")
+```
+
+### CDR3 length {.tabset}
+
+#### Cluster
+
+```{r TRB-amino-acid-cdr3-len-Cluster, fig.width=10, fig.height=5}
+ggplot(trb_aa_props, aes(x=reorder(seurat_clusters, cdr3_aa_length, median),
+                         y=cdr3_aa_length, fill=seurat_clusters)) +
+  labs(x='Cluster', y='Amino acids', title='CDR3 length') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = cluster_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Tissue
+
+```{r TRB-amino-acid-cdr3-len-Tissue, fig.width=6, fig.height=5}
+ggplot(trb_aa_props, aes(x=Tissue, y=cdr3_aa_length, fill=Tissue)) +
+  labs(x='Tissue', y='Amino acids', title='CDR3 length') +
+  geom_violin(trim=F, adjust=2) +
+  geom_boxplot(width=.1, fill="black", outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('LN', 'Normal'),
+                                        c('Normal', 'Adjacent'),
+                                        c('Adjacent', 'Tumor'),
+                                        c('Normal', 'Tumor')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = tissue_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Orgin
+
+```{r TRB-amino-acid-cdr3-len-Orgin, fig.width=10, fig.height=5}
+ggplot(trb_aa_props, aes(x=reorder(Origin, cdr3_aa_length, median),
+                         y=cdr3_aa_length, fill=Origin)) +
+  labs(x='Origin', y='Amino acids', title='CDR3 length') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = origin_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Metastasis
+
+```{r TRB-amino-acid-cdr3-len-Metastasis, fig.width=5, fig.height=5}
+ggplot(trb_aa_props, aes(x=Metastasis,
+                         y=cdr3_aa_length, fill=Metastasis)) +
+  labs(x='Origin', y='Amino acids', title='CDR3 length') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('N', 'P')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = metastasis_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+### CDR3 hydrophobicity {.tabset}
+
+#### Cluster
+
+```{r TRB-amino-acid-cdr3-hydrophobicity-Cluster, fig.width=10, fig.height=5}
+ggplot(trb_aa_props, aes(x=reorder(seurat_clusters, cdr3_aa_gravy, median),
+                         y=cdr3_aa_gravy, fill=seurat_clusters)) +
+  labs(x='Cluster', y='GRAVY', title='CDR3 hydrophobicity') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = cluster_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Tissue
+
+```{r TRB-amino-acid-cdr3-hydrophobicity-Tissue, fig.width=6, fig.height=5}
+ggplot(trb_aa_props, aes(x=Tissue, y=cdr3_aa_gravy, fill=Tissue)) +
+  labs(x='Tissue', y='GRAVY', title='CDR3 hydrophobicity') +
+  geom_violin(trim=F, adjust=2) +
+  geom_boxplot(width=.1, fill="black", outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('LN', 'Normal'),
+                                        c('Normal', 'Adjacent'),
+                                        c('Adjacent', 'Tumor'),
+                                        c('Normal', 'Tumor')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = tissue_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Orgin
+
+```{r TRB-amino-acid-cdr3-hydrophobicity-Orgin, fig.width=10, fig.height=5}
+ggplot(trb_aa_props, aes(x=reorder(Origin, cdr3_aa_gravy, median),
+                         y=cdr3_aa_gravy, fill=Origin)) +
+  labs(x='Origin', y='GRAVY', title='CDR3 hydrophobicity') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = origin_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Metastasis
+
+```{r TRB-amino-acid-cdr3-hydrophobicity-Metastasis, fig.width=5, fig.height=5}
+ggplot(trb_aa_props, aes(x=Metastasis,
+                         y=cdr3_aa_gravy, fill=Metastasis)) +
+  labs(x='Origin', y='GRAVY', title='CDR3 hydrophobicity') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('N', 'P')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = metastasis_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+### CDR3 bulkiness
+
+#### Cluster
+
+```{r TRB-amino-acid-cdr3-bulkiness-Cluster, fig.width=10, fig.height=5}
+ggplot(trb_aa_props, aes(x=reorder(seurat_clusters, cdr3_aa_bulk, median),
+                         y=cdr3_aa_bulk, fill=seurat_clusters)) +
+  labs(x='Cluster', y='Bulkiness', title='CDR3 Bulkiness') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = cluster_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Tissue
+
+```{r TRB-amino-acid-cdr3-bulkiness-Tissue, fig.width=6, fig.height=5}
+ggplot(trb_aa_props, aes(x=Tissue, y=cdr3_aa_bulk, fill=Tissue)) +
+  labs(x='Tissue', y='Bulkiness', title='CDR3 Bulkiness') +
+  geom_violin(trim=F, adjust=2) +
+  geom_boxplot(width=.1, fill="black", outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('LN', 'Normal'),
+                                        c('Normal', 'Adjacent'),
+                                        c('Adjacent', 'Tumor'),
+                                        c('Normal', 'Tumor')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = tissue_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Orgin
+
+```{r TRB-amino-acid-cdr3-bulkiness-Orgin, fig.width=10, fig.height=5}
+ggplot(trb_aa_props, aes(x=reorder(Origin, cdr3_aa_bulk, median),
+                         y=cdr3_aa_bulk, fill=Origin)) +
+  labs(x='Origin', y='Bulkiness', title='CDR3 Bulkiness') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = origin_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Metastasis
+
+```{r TRB-amino-acid-cdr3-bulkiness-Metastasis, fig.width=5, fig.height=5}
+ggplot(trb_aa_props, aes(x=Metastasis,
+                         y=cdr3_aa_bulk, fill=Metastasis)) +
+  labs(x='Origin', y='Bulkiness', title='CDR3 Bulkiness') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('N', 'P')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = metastasis_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+### CDR3 polarity
+
+#### Cluster
+
+```{r TRB-amino-acid-cdr3-polarity-Cluster, fig.width=10, fig.height=5}
+ggplot(trb_aa_props, aes(x=reorder(seurat_clusters, cdr3_aa_polarity, median),
+                         y=cdr3_aa_polarity, fill=seurat_clusters)) +
+  labs(x='Cluster', y='Polarity', title='CDR3 polarity') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = cluster_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Tissue
+
+```{r TRB-amino-acid-cdr3-polarity-Tissue, fig.width=6, fig.height=5}
+ggplot(trb_aa_props, aes(x=Tissue, y=cdr3_aa_polarity, fill=Tissue)) +
+  labs(x='Tissue', y='Polarity', title='CDR3 polarity') +
+  geom_violin(trim=F, adjust=2) +
+  geom_boxplot(width=.1, fill="black", outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('LN', 'Normal'),
+                                        c('Normal', 'Adjacent'),
+                                        c('Adjacent', 'Tumor'),
+                                        c('Normal', 'Tumor')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = tissue_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Orgin
+
+```{r TRB-amino-acid-cdr3-polarity-Orgin, fig.width=10, fig.height=5}
+ggplot(trb_aa_props, aes(x=reorder(Origin, cdr3_aa_polarity, median),
+                         y=cdr3_aa_polarity, fill=Origin)) +
+  labs(x='Origin', y='Polarity', title='CDR3 polarity') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = origin_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Metastasis
+
+```{r TRB-amino-acid-cdr3-polarity-Metastasis, fig.width=5, fig.height=5}
+ggplot(trb_aa_props, aes(x=Metastasis,
+                         y=cdr3_aa_polarity, fill=Metastasis)) +
+  labs(x='Origin', y='Polarity', title='CDR3 polarity') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('N', 'P')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = metastasis_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+### CDR3 net charge
+
+#### Cluster
+
+```{r TRB-amino-acid-cdr3-charge-Cluster, fig.width=10, fig.height=5}
+ggplot(trb_aa_props, aes(x=reorder(seurat_clusters, cdr3_aa_charge, median),
+                         y=cdr3_aa_charge, fill=seurat_clusters)) +
+  labs(x='Cluster', y='Net charge', title='CDR3 net charge') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = cluster_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Tissue
+
+```{r TRB-amino-acid-cdr3-charge-Tissue, fig.width=6, fig.height=5}
+ggplot(trb_aa_props, aes(x=Tissue, y=cdr3_aa_charge, fill=Tissue)) +
+  labs(x='Tissue', y='Net charge', title='CDR3 net charge') +
+  geom_violin(trim=F, adjust=2) +
+  geom_boxplot(width=.1, fill="black", outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('LN', 'Normal'),
+                                        c('Normal', 'Adjacent'),
+                                        c('Adjacent', 'Tumor'),
+                                        c('Normal', 'Tumor')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = tissue_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Orgin
+
+```{r TRB-amino-acid-cdr3-charge-Orgin, fig.width=10, fig.height=5}
+ggplot(trb_aa_props, aes(x=reorder(Origin, cdr3_aa_charge, median),
+                         y=cdr3_aa_charge, fill=Origin)) +
+  labs(x='Origin', y='Net charge', title='CDR3 net charge') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = origin_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Metastasis
+
+```{r TRB-amino-acid-cdr3-charge-Metastasis, fig.width=5, fig.height=5}
+ggplot(trb_aa_props, aes(x=Metastasis,
+                         y=cdr3_aa_charge, fill=Metastasis)) +
+  labs(x='Origin', y='Net charge', title='CDR3 net charge') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('N', 'P')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = metastasis_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+### CDR3 basic residues {.tabset}
+
+#### Cluster
+
+```{r TRB-amino-acid-cdr3-residues-Cluster, fig.width=10, fig.height=5}
+ggplot(trb_aa_props, aes(x=reorder(seurat_clusters, cdr3_aa_basic, median),
+                         y=cdr3_aa_basic, fill=seurat_clusters)) +
+  labs(x='Cluster', y='Basic residues', title='CDR3 basic residues') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = cluster_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Tissue
+
+```{r TRB-amino-acid-cdr3-residues-Tissue, fig.width=6, fig.height=5}
+ggplot(trb_aa_props, aes(x=Tissue, y=cdr3_aa_basic, fill=Tissue)) +
+  labs(x='Tissue', y='Basic residues', title='CDR3 basic residues') +
+  geom_violin(trim=F, adjust=2) +
+  geom_boxplot(width=.1, fill="black", outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('LN', 'Normal'),
+                                        c('Normal', 'Adjacent'),
+                                        c('Adjacent', 'Tumor'),
+                                        c('Normal', 'Tumor')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = tissue_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Orgin
+
+```{r TRB-amino-acid-cdr3-residues-Orgin, fig.width=10, fig.height=5}
+ggplot(trb_aa_props, aes(x=reorder(Origin, cdr3_aa_basic, median),
+                         y=cdr3_aa_basic, fill=Origin)) +
+  labs(x='Origin', y='Basic residues', title='CDR3 basic residues') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = origin_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Metastasis
+
+```{r TRB-amino-acid-cdr3-residues-Metastasis, fig.width=5, fig.height=5}
+ggplot(trb_aa_props, aes(x=Metastasis,
+                         y=cdr3_aa_basic, fill=Metastasis)) +
+  labs(x='Origin', y='Basic residues', title='CDR3 basic residues') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('N', 'P')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = metastasis_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+### CDR3 acidic residues {.tabset}
+
+#### Cluster
+
+```{r TRB-amino-acid-cdr3-acidic-residues-Cluster, fig.width=10, fig.height=5}
+ggplot(trb_aa_props, aes(x=reorder(seurat_clusters, cdr3_aa_acidic, median),
+                         y=cdr3_aa_acidic, fill=seurat_clusters)) +
+  labs(x='Cluster', y='Acidic residues', title='CDR3 acidic residues') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = cluster_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Tissue
+
+```{r TRB-amino-acid-cdr3-acidic-residues-Tissue, fig.width=6, fig.height=5}
+ggplot(trb_aa_props, aes(x=Tissue, y=cdr3_aa_acidic, fill=Tissue)) +
+  labs(x='Tissue', y='Acidic residues', title='CDR3 acidic residues') +
+  geom_violin(trim=F, adjust=2) +
+  geom_boxplot(width=.1, fill="black", outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('LN', 'Normal'),
+                                        c('Normal', 'Adjacent'),
+                                        c('Adjacent', 'Tumor'),
+                                        c('Normal', 'Tumor')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = tissue_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Orgin
+
+```{r TRB-amino-acid-cdr3-acidic-residues-Orgin, fig.width=10, fig.height=5}
+ggplot(trb_aa_props, aes(x=reorder(Origin, cdr3_aa_acidic, median),
+                         y=cdr3_aa_acidic, fill=Origin)) +
+  labs(x='Origin', y='Acidic residues', title='CDR3 acidic residues') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = origin_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Metastasis
+
+```{r TRB-amino-acid-cdr3-acidic-residues-Metastasis, fig.width=5, fig.height=5}
+ggplot(trb_aa_props, aes(x=Metastasis,
+                         y=cdr3_aa_acidic, fill=Metastasis)) +
+  labs(x='Origin', y='Acidic residues', title='CDR3 acidic residues') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('N', 'P')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = metastasis_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+### CDR3 aromatic
+
+#### Cluster
+
+```{r TRB-amino-acid-cdr3-aromatic-Cluster, fig.width=10, fig.height=5}
+ggplot(trb_aa_props, aes(x=reorder(seurat_clusters, cdr3_aa_aromatic, median),
+                         y=cdr3_aa_aromatic, fill=seurat_clusters)) +
+  labs(x='Cluster', y='Aromatic', title='CDR3 aromatic') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = cluster_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Tissue
+
+```{r TRB-amino-acid-cdr3-aromatic-Tissue, fig.width=6, fig.height=5}
+ggplot(trb_aa_props, aes(x=Tissue, y=cdr3_aa_aromatic, fill=Tissue)) +
+  labs(x='Tissue', y='Aromatic', title='CDR3 aromatic') +
+  geom_violin(trim=F, adjust=2) +
+  geom_boxplot(width=.1, fill="black", outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('LN', 'Normal'),
+                                        c('Normal', 'Adjacent'),
+                                        c('Adjacent', 'Tumor'),
+                                        c('Normal', 'Tumor')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = tissue_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Orgin
+
+```{r TRB-amino-acid-cdr3-aromatic-Orgin, fig.width=10, fig.height=5}
+ggplot(trb_aa_props, aes(x=reorder(Origin, cdr3_aa_aromatic, median),
+                         y=cdr3_aa_aromatic, fill=Origin)) +
+  labs(x='Origin', y='Aromatic', title='CDR3 aromatic') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = origin_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Metastasis
+
+```{r TRB-amino-acid-cdr3-aromatic-Metastasis, fig.width=5, fig.height=5}
+ggplot(trb_aa_props, aes(x=Metastasis,
+                         y=cdr3_aa_aromatic, fill=Metastasis)) +
+  labs(x='Origin', y='Aromatic', title='CDR3 aromatic') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('N', 'P')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = metastasis_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+### CDR3 aliphatic index
+
+#### Cluster
+
+```{r TRB-amino-acid-cdr3-aliphatic-index-Cluster, fig.width=10, fig.height=5}
+ggplot(trb_aa_props, aes(x=reorder(seurat_clusters, cdr3_aa_aliphatic, median),
+                         y=cdr3_aa_aliphatic, fill=seurat_clusters)) +
+  labs(x='Cluster', y='Aliphatic index', title='CDR3 aliphatic index') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = cluster_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Tissue
+
+```{r TRB-amino-acid-cdr3-aliphatic-index-Tissue, fig.width=6, fig.height=5}
+ggplot(trb_aa_props, aes(x=Tissue, y=cdr3_aa_aliphatic, fill=Tissue)) +
+  labs(x='Tissue', y='Aliphatic index', title='CDR3 aliphatic index') +
+  geom_violin(trim=F, adjust=2) +
+  geom_boxplot(width=.1, fill="black", outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('LN', 'Normal'),
+                                        c('Normal', 'Adjacent'),
+                                        c('Adjacent', 'Tumor'),
+                                        c('Normal', 'Tumor')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = tissue_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Orgin
+
+```{r TRB-amino-acid-cdr3-aliphatic-index-Orgin, fig.width=10, fig.height=5}
+ggplot(trb_aa_props, aes(x=reorder(Origin, cdr3_aa_aliphatic, median),
+                         y=cdr3_aa_aliphatic, fill=Origin)) +
+  labs(x='Origin', y='Aliphatic index', title='CDR3 aliphatic index') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  scale_fill_manual(values = origin_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+#### Metastasis
+
+```{r TRB-amino-acid-cdr3-aliphatic-index-Metastasis, fig.width=5, fig.height=5}
+ggplot(trb_aa_props, aes(x=Metastasis,
+                         y=cdr3_aa_aliphatic, fill=Metastasis)) +
+  labs(x='Origin', y='Aliphatic index', title='CDR3 aliphatic index') +
+  geom_boxplot(outlier.colour=NA) +
+  stat_summary(fun.y=median, geom="point", fill="white", shape=21, size=1.5) +
+  stat_compare_means(comparisons = list(c('N', 'P')),
+                     method = 'wilcox.test') +
+  scale_fill_manual(values = metastasis_color_maps) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+
+
+
+
+
+

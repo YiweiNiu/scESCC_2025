@@ -1,0 +1,316 @@
+---
+title: "00.Fig.SOX4_pseudotime"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "00.Fig.SOX4_pseudotime"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = FALSE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+
+# patch
+library(patchwork)
+library(cowplot)
+theme_set(theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+))
+my_theme <- theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+)
+geom.text.size <- 6 / (14 / 5)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+library(circlize)
+
+# color
+library(ggsci)
+
+# pvclust
+library(pvclust)
+library(dendextend)
+
+# Seurat
+library(Seurat)
+
+# monocle
+library(monocle3)
+
+# CytoTRACE
+library(CytoTRACE)
+```
+
+Load code
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+## Common functions
+
+```{r}
+
+```
+
+
+## Treg
+
+```{r load-rds, cache=FALSE}
+cds_treg = readRDS(here::here('output/04.rm_cells/monocle3_treg.rds'))
+srat_treg <- readRDS(here::here("output/04.rm_cells/seurat_treg.rds"))
+Idents(srat_treg) <- "level_3"
+range(srat_treg@assays$RNA@data["SOX4",])
+```
+
+```{r}
+d4p <- data.frame(
+  SOX4 = assays(cds_treg)$logcounts["SOX4",],
+  psedutime = pseudotime(cds_treg),
+  celltype = pData(cds_treg)$level_3
+)
+```
+
+OX40 and CCR8 for maturation?
+
+```{r fig.width=4, fig.height=2}
+FeaturePlot(srat_treg, features = c("TNFRSF4", "CCR8")) & my_theme
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.TNFRSF4_CCR8.Treg.pdf"),
+  width = 4, height = 2
+)
+```
+
+Treg-c2 -> Treg-c3
+
+```{r fig.width=2, fig.height=1.5}
+df <- d4p %>% 
+  filter(celltype %in% c("Treg-C2", "Treg-C3")) %>% 
+  arrange(psedutime)
+a <- zoo::rollmean(df[, "SOX4"], dim(df)[1] / 20)
+b <- zoo::rollapply(df[, "SOX4"], width = dim(df)[1] / 20, FUN = sd)
+tibble(value = a, n = 1:length(a), sd = b) %>%
+    mutate(
+      lower = value - sd,
+      upper = value + sd
+    ) %>%
+    ggplot(aes(x = n, y = value)) +
+    geom_line(color = "blue") +
+    geom_ribbon(aes(ymin = lower, ymax = upper, color = NULL), alpha = .5, fill = "#dbd8ec") +
+    labs(
+      x = "Pseudotime",
+      y = "SOX4 (Treg-C2 -> Treg-C3)"
+    ) +
+  my_theme
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.SOX4_along_pseudotime.Treg-C2_to_Treg-C3.pdf"),
+  width = 2, height = 1.5
+)
+```
+
+Treg-c2 -> Treg-c1
+
+```{r fig.width=2, fig.height=1.5}
+df <- d4p %>% 
+  filter(celltype %in% c("Treg-C2", "Treg-C1")) %>% 
+  arrange(psedutime)
+a <- zoo::rollmean(df[, "SOX4"], dim(df)[1] / 20)
+b <- zoo::rollapply(df[, "SOX4"], width = dim(df)[1] / 20, FUN = sd)
+tibble(value = a, n = 1:length(a), sd = b) %>%
+    mutate(
+      lower = value - sd,
+      upper = value + sd
+    ) %>%
+    ggplot(aes(x = n, y = value)) +
+    geom_line(color = "blue") +
+    geom_ribbon(aes(ymin = lower, ymax = upper, color = NULL), alpha = .5, fill = "#dbd8ec") +
+    labs(
+      x = "Pseudotime",
+      y = "SOX4 (Treg-C2 -> Treg-C1)"
+    ) +
+  my_theme
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.SOX4_along_pseudotime.Treg-C2_to_Treg-C1.pdf"),
+  width = 2, height = 1.5
+)
+```
+
+SOX4 featureplot
+
+```{r fig.width=2, fig.height=1.8}
+FeaturePlot(srat_treg, features = "SOX4", pt.size = .1, order = T) +
+  scale_color_gradientn(colours = c('lightgrey', 'blue'),  limits = c(0, 5.2)) +
+  labs(title = NULL) +
+  my_theme
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.SOX4_exp.Treg.pdf"),
+  width = 2, height = 1.8
+)
+```
+
+## CD8
+
+```{r fig.width=2, fig.height=1.8}
+srat_cd8 = readRDS(here::here('output/04.rm_cells/seurat_cd8.random1.rds'))
+range(srat_cd8@assays$RNA@data["SOX4",])
+
+FeaturePlot(srat_cd8, features = c("SOX4"), reduction = "dt", order = TRUE) +
+  scale_color_gradientn(colours = c('lightgrey', 'blue'),  limits = c(0, 5.2)) +
+  labs(title = NULL) +
+  my_theme
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.SOX4_exp.CD8_random1.pdf"),
+  width = 2, height = 1.8
+)
+```
+
+## cDC2 -> tDC
+
+```{r fig.width=2, fig.height=1.8}
+srat_cDC2_tDC = readRDS(here::here('output/04.rm_cells/seurat_cDC2_tDC.rds'))
+range(srat_cDC2_tDC@assays$RNA@data["SOX4",])
+
+FeaturePlot(srat_cDC2_tDC, features = "SOX4", pt.size = .1, order = T) +
+  scale_color_gradientn(colours = c('lightgrey', 'blue'),  limits = c(0, 5.2)) +
+  labs(title = NULL) +
+  my_theme
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.SOX4_exp.cDC2_tDC.pdf"),
+  width = 2, height = 1.8
+)
+```
+
+## pDC
+
+```{r fig.width=2, fig.height=1.8}
+srat_pDC = readRDS(here::here('output/04.rm_cells/seurat_pDC.rds'))
+range(srat_pDC@assays$RNA@data["SOX4",])
+
+FeaturePlot(srat_pDC, features = "SOX4", pt.size = .1, order = T) +
+  scale_color_gradientn(colours = c('lightgrey', 'blue'),  limits = c(0, 5.2)) +
+  labs(title = NULL) +
+  my_theme
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.SOX4_exp.pDC.pdf"),
+  width = 2, height = 1.8
+)
+```
+
+## Mac & Mono
+
+```{r}
+srat_mps <- readRDS(here::here('output/04.rm_cells/seurat_mps.rds'))
+range(srat_mps@assays$RNA@data["SOX4",])
+```
+
+```{r fig.width=2, fig.height=1.8}
+FeaturePlot(srat_mps, features = "SOX4", order = T, pt.size = .001) +
+  scale_color_gradientn(colours = c('lightgrey', 'blue'),  limits = c(0, 5.2)) +
+  labs(title = NULL) +
+  my_theme
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.SOX4_exp.mono_mac.pdf"),
+  width = 2, height = 1.8
+)
+```
+
+## Fib
+
+NMF-C1_to_iCAF-C1
+
+```{r fig.width=2, fig.height=1.8}
+srat.par_1 <- readRDS(here::here("output/monocle3.fib.par_1/seurat_fibroblasts.par_1.rds"))
+range(srat.par_1@assays$RNA@data["SOX4",])
+
+FeaturePlot(srat.par_1, features = "SOX4", pt.size = .1, order = T) +
+  scale_color_gradientn(colours = c('lightgrey', 'blue'),  limits = c(0, 5.2)) +
+  labs(title = NULL) +
+  my_theme
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.SOX4_exp.NMF-C1_to_iCAF-C1.pdf"),
+  width = 2, height = 1.8
+)
+```
+
+pericyte-C1_to_myCAF-C2
+
+```{r fig.width=2, fig.height=1.8}
+srat.par_2 <- readRDS(here::here("output/monocle3.fib.par_2/seurat_fibroblasts.par_2.rds"))
+range(srat.par_2@assays$RNA@data["SOX4",])
+
+FeaturePlot(srat.par_2, features = "SOX4", pt.size = .1, order = T) +
+  scale_color_gradientn(colours = c('lightgrey', 'blue'),  limits = c(0, 5.2)) +
+  labs(title = NULL) +
+  my_theme
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.SOX4_exp.pericyte-C1_to_myCAF-C2.pdf"),
+  width = 2, height = 1.8
+)
+```
+
+
+## Session info
+

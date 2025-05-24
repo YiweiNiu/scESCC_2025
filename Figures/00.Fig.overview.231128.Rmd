@@ -1,0 +1,446 @@
+---
+title: "00.Fig.overview.231128"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "00.Fig.overview.231128"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = FALSE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+
+# patch
+library(patchwork)
+library(cowplot)
+my_theme <- theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+)
+geom.text.size <- 6 / (14 / 5)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+
+# color
+library(ggsci)
+
+# Seurat
+library(Seurat)
+
+# vis
+# library(scRNAtoolVis)
+```
+
+Load code
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+Load rds
+
+```{r load-rds, cache=FALSE}
+srat <- readRDS(here::here("output/04.rm_cells/seurat.rds"))
+srat
+```
+
+## UMAP {.tabset}
+
+### cell type
+
+```{r fig.width=2, fig.height=2}
+p.umap.cellType <- DimPlot(srat,
+  reduction = "umap", group.by = "cellType",
+  label = TRUE, label.size = geom.text.size, raster = TRUE,
+  shuffle = TRUE
+) +
+  scale_color_manual(values = cell_color_maps) +
+  labs(title = NULL) +
+  my_theme +
+  theme(
+    legend.position = "none",
+    plot.margin = margin(rep(0, 4), unit = "cm")
+  )
+p.umap.cellType
+
+# saveRDS(p.umap.cellType, file = here::here("output", DOCNAME, "Fig.umap.cellType.rds"))
+ggsave2(p.umap.cellType,
+  filename = here::here("output", DOCNAME, "Fig.umap.cellType.pdf"),
+  height = 2, width = 2, device = cairo_pdf
+)
+```
+
+### Origin2
+
+```{r fig.width=2.6, fig.height=2}
+p.umap.origin2 <- DimPlot(srat,
+  reduction = "umap", group.by = "Origin2_n",
+  raster = TRUE, shuffle = TRUE
+) +
+  scale_color_manual(values = origin2_color_maps) +
+  labs(title = NULL) +
+  my_theme
+p.umap.origin2
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.umap.Origin2.pdf"),
+  height = 2, width = 2.6, device = cairo_pdf
+)
+```
+
+Split
+
+```{r fig.width=7.5, fig.height=1.1}
+p.umap.splitByOrigin2 <- DimPlot(srat,
+  reduction = "umap",
+  split.by = "Origin2_n", ncol = 7,
+  raster = TRUE
+) +
+  scale_color_manual(values = cell_color_maps) +
+  my_theme +
+  NoAxes() +
+  theme(
+    legend.margin = margin(rep(0, 4), unit = "cm"),
+    legend.spacing.y = unit(0, "cm"),
+    legend.key.height = unit(.4, "cm"),
+    legend.box.margin = margin(rep(-.2, 4), unit = "cm"),
+    plot.margin = margin(rep(0, 4), unit = "cm"),
+    strip.background = element_rect(fill = "#f3f2f1")
+  )
+p.umap.splitByOrigin2
+
+ggsave2(p.umap.splitByOrigin2,
+  filename = here::here("output", DOCNAME, "Fig.umap.splitByOrigin2.pdf"),
+  height = 1.1, width = 7.5, device = cairo_pdf
+)
+```
+
+### Patient
+
+```{r fig.width=2.5, fig.height=2}
+p.umap.patient <- DimPlot(srat,
+  reduction = "umap", group.by = "Patient", raster = TRUE, pt.size = .05, shuffle = TRUE
+) +
+  scale_color_manual(values = patient_color_maps) +
+  labs(title = NULL) +
+  my_theme
+p.umap.patient
+
+ggsave2(p.umap.patient,
+  filename = here::here("output", DOCNAME, "Fig.umap.Patient.pdf"),
+  height = 2, width = 2.5, device = cairo_pdf
+)
+```
+
+## Sample composition
+
+Source
+
+```{r sample-compositions, fig.width=6, fig.height=2}
+p.sample_compo <- PlotSampleFraction(seurat_obj = srat, "cellType", cell_color_maps)
+p.sample_compo
+
+# saveRDS(p, file = here::here("output", DOCNAME, "Fig.sampleComposition.rds"))
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.sampleComposition.pdf"),
+  height = 3, width = 7.8, device = cairo_pdf
+)
+```
+
+## UMAP of epi, fib, endo (epi as cluster)
+
+```{r fig.width=7.5, fig.height=2.5}
+srat.epi <- readRDS(here::here("output/04.rm_cells", "seurat_epithelia.rds"))
+srat.endo <- readRDS(here::here("output/04.rm_cells", "seurat_endothelia.rds"))
+srat.fib <- readRDS(here::here("output/04.rm_cells", "seurat_fibroblasts.rds"))
+
+p.umap.endo <- DimPlot(srat.endo,
+  reduction = "umap", group.by = "level_2",
+  label = TRUE, label.size = geom.text.size,
+  raster = TRUE, shuffle = TRUE
+) +
+  scale_color_manual(values = endo_level_2_color) +
+  labs(title = NULL) +
+  my_theme +
+  NoLegend()
+
+p.umap.fib <- DimPlot(srat.fib,
+  reduction = "umap", group.by = "level_3",
+  label = TRUE, label.size = geom.text.size,
+  raster = TRUE, shuffle = TRUE
+) +
+  scale_color_manual(values = fib_level_3_color) +
+  labs(title = NULL) +
+  my_theme +
+  NoLegend()
+
+p.umap.epi <- DimPlot(srat.epi,
+  reduction = "umap", group.by = "seurat_clusters",
+  label = TRUE, label.size = geom.text.size,
+  raster = TRUE, shuffle = TRUE
+) +
+  scale_color_manual(values = cluster_color_maps) +
+  labs(title = NULL) +
+  my_theme +
+  NoLegend()
+
+p.umap.epi + p.umap.fib + p.umap.endo +
+  plot_layout(ncol = 3)
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.main.umap_stromal.pdf"),
+  height = 2.5, width = 7.5, device = cairo_pdf
+)
+```
+
+
+```{r fig.width=7.5, fig.height=3}
+p.umap.endo <- DimPlot(srat.endo,
+  reduction = "umap", group.by = "level_2",
+  label.size = geom.text.size,
+  raster = TRUE, shuffle = TRUE
+) +
+  scale_color_manual(values = endo_level_2_color) +
+  labs(title = NULL) +
+  my_theme +
+  guides(color = guide_legend(ncol = 4, byrow = TRUE)) +
+  theme(legend.margin = margin(rep(0, 4), unit = "cm"),
+        legend.spacing.y = unit(0, "cm"),
+        legend.key.height = unit(.4, "cm"),
+        legend.box.margin = margin(rep(-.2, 4), unit = "cm"),
+        legend.position = "bottom")
+
+p.umap.fib <- DimPlot(srat.fib,
+  reduction = "umap", group.by = "level_3",
+  label.size = geom.text.size,
+  raster = TRUE, shuffle = TRUE
+) +
+  scale_color_manual(values = fib_level_3_color) +
+  labs(title = NULL) +
+  my_theme +
+  guides(color = guide_legend(ncol = 4, byrow = TRUE)) +
+  theme(legend.margin = margin(rep(0, 4), unit = "cm"),
+        legend.spacing.y = unit(0, "cm"),
+        legend.key.height = unit(.4, "cm"),
+        legend.box.margin = margin(rep(-.2, 4), unit = "cm"),
+        legend.position = "bottom")
+
+p.umap.epi <- DimPlot(srat.epi,
+  reduction = "umap", group.by = "seurat_clusters",
+  label.size = geom.text.size,
+  raster = TRUE, shuffle = TRUE
+) +
+  scale_color_manual(values = cluster_color_maps) +
+  labs(title = NULL) +
+  my_theme +
+  guides(color = guide_legend(ncol = 8, byrow = TRUE)) +
+  theme(legend.margin = margin(rep(0, 4), unit = "cm"),
+        legend.spacing.y = unit(0, "cm"),
+        legend.key.height = unit(.4, "cm"),
+        legend.box.margin = margin(rep(-.2, 4), unit = "cm"),
+        legend.position = "bottom")
+
+p.umap.epi + p.umap.fib + p.umap.endo +
+  plot_layout(ncol = 3)
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.main.umap_stromal.bottom_legend.pdf"),
+  height = 3, width = 7.5, device = cairo_pdf
+)
+```
+
+## Markers
+
+DotPlot of markers
+
+```{r plot-cell-markers-supp-dot, fig.width=5, fig.height=1.8}
+p.marker.dot <- DotPlot(srat, features = c(
+  # T
+  "CD3D", "CD3E", "CD2",
+  # B
+  "CD19", "MS4A1", "CD79A", "IGHM",
+  # mye
+  "LYZ", "FCER1G", "TYROBP", "AIF1",
+  # epi
+  "CNFN", "CRNN", "KRT6A", "KRT13",
+  # fib
+  "DCN", "COL1A1", "COL1A2", "LUM",
+  # endo
+  "CDH5", "VWF", "PECAM1", "CLDN5",
+  # platelets
+  "PPBP", "PF4"
+), dot.scale = 4) +
+  labs(x = NULL, y = NULL) +
+  scale_y_discrete(limits = rev) +
+  my_theme +
+  theme(
+    axis.text.x = element_text(angle = 60, hjust = 1)
+  )
+p.marker.dot
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.dotplot.markers.pdf"),
+  height = 1.8, width = 5, device = cairo_pdf
+)
+```
+
+## Composition plot
+
+### N3-N5
+
+肿瘤组织内异质性
+
+```{r n3-n5, fig.height=3, fig.width=2.5}
+p.cellByN3N4N5 <- srat@meta.data %>%
+  filter(Tissue == "Tumor") %>%
+  group_by(Patient, Origin, cellType) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n / sum(n) * 100) %>%
+  ggplot(aes(x = Origin, y = Percent, fill = cellType)) +
+  geom_col() +
+  labs(x = NULL, fill = NULL) +
+  scale_fill_manual(values = cell_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  facet_wrap(. ~ Patient) +
+  my_theme +
+  theme(
+    axis.text.x = element_text(angle = 60, hjust = 1),
+    legend.margin = margin(rep(0, 4), unit = "cm"),
+    legend.spacing.y = unit(0, "cm"),
+    legend.key.height = unit(.4, "cm"),
+    legend.box.margin = margin(rep(-.2, 4), unit = "cm"),
+    plot.margin = margin(rep(0, 4), unit = "cm"),
+    strip.background = element_rect(fill = "#f3f2f1")
+  )
+p.cellByN3N4N5
+```
+
+### Metastatic
+
+转移阳性的病人与阴性病人
+
+```{r Metastatic, fig.height=3, fig.width=2.5}
+p.cellByMetastatic <- srat@meta.data %>%
+  filter(Origin2_n != "pLN") %>%
+  group_by(Origin2_n, Metastatic, cellType) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n / sum(n) * 100) %>%
+  ggplot(aes(x = Metastatic, y = Percent, fill = cellType)) +
+  geom_col() +
+  labs(x = NULL, fill = NULL) +
+  scale_fill_manual(values = cell_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  facet_wrap(. ~ Origin2_n, ncol = 3) +
+  my_theme +
+  theme(
+    axis.text.x = element_text(angle = 60, hjust = 1),
+    legend.margin = margin(rep(0, 4), unit = "cm"),
+    legend.spacing.y = unit(0, "cm"),
+    legend.key.height = unit(.4, "cm"),
+    legend.box.margin = margin(rep(-.2, 4), unit = "cm"),
+    plot.margin = margin(rep(0, 4), unit = "cm"),
+    strip.background = element_rect(fill = "#f3f2f1")
+  )
+p.cellByMetastatic
+```
+
+
+## Align plots
+
+### Main
+
+Row 2: celltype umap, sample composition
+
+```{r fig.width=8, fig.height=2}
+plot_grid(p.umap.cellType, p.sample_compo, ncol = 2, rel_widths = c(2, 6))
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.main.r2.pdf"),
+  height = 2, width = 8, device = cairo_pdf
+)
+```
+
+Row 3: umap of Origin2, split
+
+```{r fig.width=7.5, fig.height=1.1}
+p.umap.splitByOrigin2
+```
+
+Row 4: umap of T, Mye, B
+
+Row 5: umap of epi, fib, endo
+
+### Supp
+
+Row 1: umap of patients, dotplot of markers
+
+```{r fig.width=7.5, fig.height=2}
+plot_grid(p.umap.patient, p.marker.dot, rel_widths = c(1, 2))
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.supp.r1.pdf"),
+  height = 2, width = 7.5, device = cairo_pdf
+)
+```
+
+Row 2
+
+```{r fig.width=5, fig.height=3}
+p.cellByN3N4N5 + p.cellByMetastatic +
+  plot_layout(ncol = 2)
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.supp.r2.pdf"),
+  height = 3, width = 5, device = cairo_pdf
+)
+```
+
+## Session info
+

@@ -1,0 +1,473 @@
+---
+title: "00.Fig.myeloid.DC.supp"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "00.Fig.myeloid.DC.supp"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = FALSE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+#library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+
+# patch
+library(patchwork)
+library(cowplot)
+my_theme <- theme_cowplot(
+  font_size = 6,# Overall font size
+  rel_small = 6 / 6,# axis tick labels
+  rel_tiny = 6 / 6,# caption
+  rel_large = 6 / 6 # title
+)
+geom.text.size <- 6 / (14 / 5)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+
+# color
+library(ggsci)
+
+# Seurat
+library(Seurat)
+library(monocle3)
+```
+
+Load code
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+Load meta data
+
+```{r load-meta, message=FALSE, warning=FALSE}
+meta.data <- read_csv(here::here("output/04.rm_cells/seurat_dc.cellmeta.csv")) %>% 
+  mutate(
+    level_2 = case_when(
+      level_2 == "tDC" ~ "mregDC",
+      TRUE ~ level_2
+    ),
+    level_3 = case_when(
+      level_3 == "tDC-C3" ~ "mregDC-C3",
+      TRUE ~ level_3
+    )
+  )
+sam_info <- read_csv(here::here("data/sample_info.3.csv")) %>%
+  mutate(cell.filtered = as.numeric(cell.filtered))
+```
+
+Load rds
+
+```{r load-rds, cache=FALSE}
+srat = readRDS(here::here('output/04.rm_cells/seurat_dc.rds'))
+srat
+```
+
+Modify srat
+
+- tDC to mregDC
+- levels
+
+```{r}
+srat@meta.data <- srat@meta.data %>% 
+  rownames_to_column() %>% 
+  mutate(
+    level_2 = case_when(
+      level_2 == "tDC" ~ "mregDC",
+      TRUE ~ level_2
+    ),
+    level_3 = case_when(
+      level_3 == "tDC-C3" ~ "mregDC-C3",
+      TRUE ~ level_3
+    )
+  ) %>% 
+  mutate(
+    level_3 = factor(level_3, levels = c("cDC2-C1", "cDC2-C2", "mregDC-C3", "cDC1-C5", "cDC1-C6", "pDC-C7", "pDC-C8", "pDC-C4"))
+  ) %>% 
+  column_to_rownames()
+
+Idents(srat) <- "level_3"
+```
+
+## Selected gene {.tabset}
+
+### Chemokine receptors and Nonchemokine receptors
+
+```{r fig.width=7.5, fig.height=4, warning=FALSE, message=FALSE}
+markers <- list(
+  chemokine_receptor = filter_features(srat, c("CCR2", "CCR5", "CXCR4", "CCR7", "XCR1", "CCR6", "CCR10", "CXCR3", "CXCR4", "CCR1", "CCR3")),
+  # Nonchemokine receptors
+  nonchemokine_receptor = filter_features(srat, c(
+    "CMKLR1", "FPR1", "FPR2", "FPR3", "C5AR1", "PTAFR", "FPR2",
+    "C1QBP", "PTGER2", "PTGER4", "AKT2", "LTB4R", "LTB4R2",
+    "CYSLTR1", "GPR183", "S1PR1", "P2RY1", "RAPGEF3", "ACVR1B",
+    "ACVR2A", "AGER", "IL18R1"
+  )),
+  tlr_and_adapter = filter_features(srat, c(
+    "MYD88", "TICAM1", "TLR10", "TLR9",
+    "TLR8", "TLR7", "TLR6", "TLR5",
+    "TLR4", "TLR3", "TLR2", "TLR1"
+  ))
+)
+
+# col order
+col_order <- c("cDC2-C1", "cDC2-C2", "mregDC-C3", "cDC1-C5", "cDC1-C6", "pDC-C7", "pDC-C8", "pDC-C4")
+
+# order of cells
+df <- srat@meta.data %>%
+  rownames_to_column("barcode") %>%
+  droplevels() %>%
+  dplyr::select(barcode, level_3, Origin2_n) %>%
+  mutate(level_3 = factor(level_3, levels = col_order)) %>%
+  arrange(level_3, Origin2_n)
+
+# get mat
+mat_raw <- t(FetchData(srat, vars = unlist(markers), slot = "data"))
+mat_raw <- mat_raw[, df$barcode]
+
+# top anno
+top_ha <- HeatmapAnnotation(
+  cell = df$level_3,
+  col = list(cell = mye_level_3_color),
+  show_annotation_name = c(cell = FALSE)
+)
+bottom_ha <- HeatmapAnnotation(
+  tissue = df$Origin4,
+  col = list(tissue = origin4_color_maps),
+  show_annotation_name = c(tissue = FALSE)
+)
+
+# col
+x <- ceiling(max(abs(mat_raw)))
+col_fun <- circlize::colorRamp2(seq(0, x, length = 50), colorRampPalette(c("white", "red"))(50))
+
+# plot
+ht = Heatmap(mat_raw,
+  name = "Exp.",
+  col = col_fun,
+  cluster_rows = FALSE, cluster_columns = FALSE,
+  show_column_names = FALSE,
+  row_names_gp = gpar(fontsize = 6, fontface = "italic"),
+  column_split = factor(
+    df$level_3,
+    levels = levels(df$level_3)
+  ),
+  row_split = factor(
+    rep(names(markers), sapply(markers, length)),
+    levels = names(markers)
+  ),
+  row_title_gp = gpar(fontsize = 6),
+  column_title = NULL,
+  column_gap = unit(0, "mm"),
+  border = TRUE,
+  top_annotation = top_ha,
+  bottom_annotation = bottom_ha,
+  heatmap_legend_param = list(
+  title_position = "topcenter",
+  direction = "vertical",
+  labels_gp = gpar(fontsize = 6),
+  title_gp = gpar(fontsize = 6),
+  grid_height = unit(1.5, "mm"),
+  grid_width = unit(1.5, "mm")
+)
+)
+
+p <- plot_grid(grid.grabExpr(draw(ht)))
+p
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.score_Chemokine_NonChemokine_receptor.pdf"),
+  width = 7.5, height = 4
+)
+```
+
+### DC functional score {.tabset}
+
+```{r fig.width=7.3, fig.height=1.5}
+func_markers <- list(
+  # migration
+  mig = filter_features(srat, c(
+    "CCR7", "DOCK8", "EZH1", "EZH2", "L1CAM", "CMKLR1", "CD74", "HLA-DRA",
+    "HLA-DQA1", "HLA-DRB5", "HLA-DPB1", "EPS8", "ASB2", "RAPGEF3", "RAP1A",
+    "ITPR1", "MYH2", "RHOA", "DIAPH1", "CDC42", "ACTR2", "ACTR3", "CD37", "CD82", "CD2AP"
+  )),
+  # maturation
+  mat = filter_features(srat, c(
+    "CCR7", "IKKB", "CHUK", "HLA-DRA", "HLA-DRB1", "HLA-DQA1",
+    "CD40", "CD80", "CD86", "CD83", "MYD88", "MAP3K7", "IFNA1",
+    "IFNB1", "IFNG"
+  )),
+  # steady state maturation
+  ste = filter_features(srat, c(
+    "CCR7", "CCL19", "ITGB8", "LTB", "SOCS2", "RASAL1", "STAT4",
+    "IL4I1", "CD40", "CCL22", "USP18", "IRF1", "GBP2", "IL15RA", "RELB"
+  )),
+  # Inflammatory DC maturation
+  inf = filter_features(srat, c(
+    "CD86", "CXCL10", "IRF7", "ISG15", "IFIT1", "SOCS1", "IL12B",
+    "TNFIAP3", "CD40", "CCL22", "USP18", "IRF1", "GBP2", "IL15RA", "RELB"
+  )),
+  # KEGG atigen processing and presentation
+  anti = filter_features(srat, c(
+    "HLA-DOA", "HLA-DOB", "KLRC3", "KLRD1", "KLRC1", "KLRC2", "RFXAP", "RFX5",
+    "IFNA5", "IFNA4", "IFNA2", "IFNA1", "LGMN", "PSME3", "CTSS", "HLA-C", "HLA-B",
+    "HLA-DMB", "HLA-DMA", "HLA-A", "HSPA1L", "HSPA1B", "HSPA2", "KIR2DS5", "HLA-G",
+    "KIR3DL1", "KIR3DL2", "HSPA1A", "RFXANK", "CREB1", "IFNA17", "HSPA5", "CD74",
+    "HSPA4", "IFNA21", "CTSL", "IFNA6", "IFI30", "IFNA7", "IFNA8", "IFNA10", "IFNA13",
+    "CIITA", "IFNA14", "IFNA16", "KIR2DL5A", "HSPA6", "HLA-DRB4", "CD4", "KIR2DL1",
+    "HLA-DRB5", "LTA", "KIR3DL3", "HLA-DRB3", "TAP2", "KIR2DS4", "TAPBP", "CD8A",
+    "CD8B", "TAP1", "KIR2DS3", "HSPA8", "KIR2DL4", "CANX", "KIR2DS1", "KIR2DL2",
+    "KIR2DL3", "KLRC4", "NFYC", "HSP90AA1", "NFYA", "NFYB", "HLA-F", "CTSB",
+    "HLA-E", "CALR", "HLA-DPA1", "HLA-DPB1", "HLA-DQA1", "PDIA3", "HLA-DQA2",
+    "HLA-DQB1", "PSME1", "PSME2", "HSP90AB1", "B2M", "HLA-DRB1", "HLA-DRA"
+  )),
+  # KEGG leukocyte transendothelial migration
+  leu = filter_features(srat, c(
+    "CDH5", "JAM3", "AFDN", "TXK", "ITGAL", "ITGAM", "ITGA4", "SIPA1", "ROCK1", "MMP2",
+    "PTK2", "MYL7", "NCF4", "MMP9", "NCF2", "CLDN20", "PECAM1", "VAV1", "VASP", "VCAM1",
+    "ITGB1", "MYL12A", "THY1", "VAV2", "ITGB2", "CTNNA1", "JAM2", "PIK3R5", "CLDN18",
+    "MAPK14", "MAPK12", "VCL", "CLDN17", "GNAI1", "MYL2", "GNAI2", "CTNND1", "MYL5",
+    "PXN", "RAPGEF3", "MYL10", "ARHGAP5", "BCAR1", "GNAI3", "CLDN16", "CLDN23", "EZR",
+    "CXCL12", "PLCG1", "PLCG2", "PTK2B", "RHOH", "OCLN", "CDC42", "ACTN2", "ACTN3",
+    "PTPN11", "PRKCB", "PRKCA", "CLDN10", "CLDN8", "CLDN2", "CLDN6", "MYL9", "CLDN5",
+    "CLDN1", "ICAM1", "RHOA", "CXCR4", "ESAM", "ACTN4", "PRKCG", "ACTN1", "MYLPF",
+    "F11R", "NOX1", "CLDN19", "RAC2", "MAPK11", "MAPK13", "CLDN15", "CD99", "CLDN22",
+    "ARHGAP35", "ACTG1", "RAC1", "ITK", "CTNNA2", "RASSF5", "CTNNB1", "CLDN11",
+    "CLDN7", "MYL12B", "CLDN4", "CLDN3", "ACTB", "ROCK2", "RAP1A", "PIK3R3", "RAP1B",
+    "CLDN14", "PIK3CA", "CLDN9", "MSN", "PIK3CB", "PIK3CD", "NCF1", "CTNNA3",
+    "NOX3", "RAPGEF4", "CYBA", "PIK3CG", "VAV3", "CYBB", "PIK3R1", "PIK3R2"
+  ))
+)
+
+# get score
+srat <- AddModuleScore(srat, features = func_markers)
+mat <- srat@meta.data %>%
+  rownames_to_column("barcode") %>%
+  dplyr::select(
+    barcode,
+    mig = Cluster1, mat = Cluster2, ste = Cluster3,
+    inf = Cluster4, anti = Cluster5, leu = Cluster6
+  ) %>%
+  column_to_rownames("barcode") %>%
+  t()
+mat <- mat[, df$barcode]
+
+# col
+x <- ceiling(max(abs(mat)))
+col_fun <- circlize::colorRamp2(seq(-x, x, length = 50), rev(colorRampPalette(brewer.pal(n = 11, name = "RdBu"))(50)))
+
+# plot
+ht = Heatmap(mat,
+  name = "Exp.",
+  col = col_fun,
+  cluster_rows = FALSE, cluster_columns = FALSE,
+  row_names_side = "left",
+  row_names_gp = gpar(fontsize = 6),
+  show_column_names = FALSE,
+  column_split = factor(
+    df$level_3,
+    levels = levels(df$level_3)
+  ),
+  column_title = NULL,
+  column_gap = unit(0, "mm"),
+  border = TRUE,
+  top_annotation = top_ha,
+  bottom_annotation = bottom_ha,
+  heatmap_legend_param = list(
+  title_position = "topcenter",
+  direction = "vertical",
+  labels_gp = gpar(fontsize = 6),
+  title_gp = gpar(fontsize = 6),
+  grid_height = unit(1.5, "mm"),
+  grid_width = unit(1.5, "mm")
+)
+)
+
+p <- plot_grid(grid.grabExpr(draw(ht)))
+p
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.score_DC_functional.pdf"),
+  width = 7.3, height = 1.5
+)
+```
+
+### P14 GO signatures
+
+```{r fig.width=7, fig.height=1.5, message=FALSE, warning=FALSE}
+func_markers <- list(
+  # leukocyte chemotaxis
+  leu_chemotaxis = filter_features(srat, GOfuncR::get_anno_genes("GO:0030595") %>% pull(gene)),
+  # antigen processing and presentation
+  antigen_pp = filter_features(srat, GOfuncR::get_anno_genes("GO:0019882") %>% pull(gene)),
+  # leukocyte cell-cell adhesion
+  leu_adhesion = filter_features(srat, GOfuncR::get_anno_genes("GO:0007159") %>% pull(gene)),
+  # regulation of leukocyte mediated immunity
+  leu_imm = filter_features(srat, GOfuncR::get_anno_genes("GO:0002703") %>% pull(gene)),
+  # regulation of T cell activation
+  reg_t_act = filter_features(srat, GOfuncR::get_anno_genes("GO:0050863") %>% pull(gene)),
+  # T cell receptor signaling pathway
+  t_recpt = filter_features(srat, GOfuncR::get_anno_genes("GO:0050852") %>% pull(gene))
+)
+
+# get score
+srat <- AddModuleScore(srat, features = func_markers)
+mat <- srat@meta.data %>%
+  rownames_to_column("barcode") %>%
+  dplyr::select(
+    barcode,
+    leu_chemotaxis = Cluster1, antigen_pp = Cluster2, leu_adhesion = Cluster3,
+    leu_imm = Cluster4, reg_t_act = Cluster5, t_recpt = Cluster6
+  ) %>%
+  column_to_rownames("barcode") %>%
+  t()
+mat <- mat[, df$barcode]
+
+# col
+x <- ceiling(max(abs(mat)))
+col_fun <- circlize::colorRamp2(seq(-x, x, length = 50), rev(colorRampPalette(brewer.pal(n = 11, name = "RdBu"))(50)))
+
+# plot
+ht = Heatmap(mat,
+  name = "Exp.",
+  col = col_fun,
+  cluster_rows = FALSE, cluster_columns = FALSE,
+  row_names_side = "left",
+  row_names_gp = gpar(fontsize = 6),
+  show_column_names = FALSE,
+  column_split = factor(
+    df$level_3,
+    levels = levels(df$level_3)
+  ),
+  column_title = NULL,
+  column_gap = unit(0, "mm"),
+  border = TRUE,
+  top_annotation = top_ha,
+  bottom_annotation = bottom_ha,
+  heatmap_legend_param = list(
+  title_position = "topcenter",
+  direction = "vertical",
+  labels_gp = gpar(fontsize = 6),
+  title_gp = gpar(fontsize = 6),
+  grid_height = unit(1.5, "mm"),
+  grid_width = unit(1.5, "mm")
+)
+)
+
+p <- plot_grid(grid.grabExpr(draw(ht)))
+p
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.score_Selected_GO.pdf"),
+  width = 7.3, height = 1.5
+)
+```
+
+### Chemokine
+
+Markers: chemokine, list from: <https://en.wikipedia.org/wiki/Chemokine>
+
+```{r Chemokine, fig.width=2, fig.height=2}
+markers = list(
+  homeostatic = filter_features(srat, c('CCL14', 'CCL19', 'CCL20', 'CCL21', 'CXCL12', 'CXCL13')),
+  inflammatory = filter_features(srat, c('CXCL8', 'CCL2', 'CCL3', 'CCL4', 'CCL5', 'CCL11', 'CXCL10'))
+  )
+
+ht <- customDoHeatmap(srat, markers, z_score = T, idents = "level_3", cluster_columns = FALSE)
+p <- plot_grid(grid.grabExpr(draw(ht, heatmap_legend_side = "right")))
+p
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.score_chemokine.pdf"),
+  width = 2, height = 2
+)
+```
+
+### Cytokines
+
+- List from table 1 of: Turner, M.D., Nedjai, B., Hurst, T., and Pennington, D.J. (2014). Cytokines and chemokines: At the crossroads of cell signalling and inflammatory disease. Biochimica et Biophysica Acta (BBA) - Molecular Cell Research 1843, 2563–2582.
+
+```{r Cytokines, fig.width=2, fig.height=4}
+markers = list(
+  # Adaptive immunity
+  adaptive = filter_features(srat, c('IL2', 'IL7', 'IL15', 'IL21', 'CSF2', 'TSLP')),
+  # Pro-inflammatory signalling
+  proinflammatory = filter_features(srat, c('IL12A', 'IL12B', 'IL23A', 'IL27', 'EBI3', 'IL10', 'IL19', 'IL20', 'IL22', 'IL24')),
+  # Anti-inflammatory signalling
+  antiinflammatory = filter_features(srat, c('IL1A', 'IL1B', 'IL1RN', 'IL18', 'IL33', 'IL36A', 'IL36G', 'IL36RN', 'IL6', 'IL31', 'CNTF', 'CTF1', 'LIF', 'SPP1', 'OSM', 'TNF', 'BAFF', 'TNFSF13', 'IL17A', 'IFNB1', 'IFNK', 'IFNG'))
+  )
+
+ht <- customDoHeatmap(srat, markers, z_score = T, idents = "level_3", cluster_columns = FALSE)
+p <- plot_grid(grid.grabExpr(draw(ht, heatmap_legend_side = "right")))
+p
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.score_Cytokines.pdf"),
+  width = 2, height = 4
+)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

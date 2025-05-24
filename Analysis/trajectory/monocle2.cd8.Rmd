@@ -1,0 +1,1231 @@
+---
+title: "monocle2.cd8"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME = "monocle2.cd8"
+#dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+    if (before) {
+        print(paste("Start:", Sys.time()))
+        NOW <<- Sys.time()
+    } else {
+        print(paste("Stop:", Sys.time()))
+        print(Sys.time() - NOW)
+    }
+})
+
+knitr::opts_chunk$set(
+    autodep        = TRUE,
+    cache          = FALSE,
+    cache.path     = paste0("cache/", DOCNAME, "/"),
+    cache.lazy     = FALSE, 
+    cache.comments = FALSE,
+    echo           = TRUE,
+    error          = FALSE,
+    fig.align      = "center",
+    fig.width      = 10,
+    fig.height     = 8,
+    message        = FALSE,
+    warning        = FALSE,
+    timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE}
+# Tidyverse
+library(tidyverse)
+# Plotting
+library(ggplotify)
+library(ggcorrplot)
+library(ggpubr)
+library(ggrepel)
+# patch
+library(patchwork)
+library(cowplot)
+theme_set(theme_cowplot())
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+# fonts
+library(extrafont)
+#font_import()
+#font_import(paths = "/T02Data/niuyw/.local/share/fonts")
+loadfonts(device = "pdf", quiet = TRUE)
+# color
+library(ggsci)
+# BiocNeighbors
+library(BiocNeighbors)
+# Seurat
+library(Seurat)
+
+# monocle
+library(monocle)
+```
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+## Load data
+
+Load cell meta
+
+```{r load-cell-meta, cache=FALSE, message=FALSE, warning=FALSE}
+cell_meta = read_csv(here::here("output/04.rm_cells/seurat_cd8.cellmeta.csv")) %>%
+  dplyr::select(barcode, seurat_clusters, level_2, level_3)
+head(cell_meta)
+```
+
+## Random 1 {.tabset}
+
+```{r prepare-cds-random1, eval=FALSE}
+seurat = readRDS(here::here('output/04.rm_cells/seurat_cd8.rds'))
+seurat
+
+set.seed(1)
+random1 = subset(seurat, downsample=300, seed = NULL)
+
+# Extract data, phenotype data, and feature data from the SeuratObject
+expr_matrix = GetAssayData(random1, assay = 'RNA', slot = "counts")
+cell_metadata = new("AnnotatedDataFrame", data = random1@meta.data)
+gene_annotation = data.frame(gene_short_name = row.names(expr_matrix), row.names = row.names(expr_matrix))
+gene_annotation <- new("AnnotatedDataFrame", data = gene_annotation)
+
+# Construct monocle CellDataSet object
+cds <- newCellDataSet(expr_matrix, phenoData = cell_metadata, featureData = gene_annotation)
+
+# Normalize the count data
+cds <- estimateSizeFactors(cds)
+
+# Calculate dispersions to filter for highly variable genes
+cds <- estimateDispersions(cds)
+
+# Constructing Single Cell Trajectories
+random1 = FindVariableFeatures(random1, selection.method = 'vst', nfeatures = 2000)
+hvg_mask = VariableFeatures(random1)
+
+cds <- setOrderingFilter(cds, hvg_mask)
+cds <- reduceDimension(cds, max_components = 2, method = "DDRTree")
+cds <- orderCells(cds)
+
+# pseudotime
+GM_state <- function(cds){
+  if (length(unique(pData(cds)$State)) > 1){
+    T0_counts <- table(pData(cds)$State, pData(cds)$level_3)[,"CD8-C8-Tn"]
+    return(as.numeric(names(T0_counts)[which
+          (T0_counts == max(T0_counts))]))
+  } else {
+    return (1)
+  }
+}
+#GM_state(cds1)
+cds <- orderCells(cds, root_state = GM_state(cds))
+
+# get DDRtree component
+dt = t(reducedDimS(cds))
+colnames(dt) = c("DT1", "DT2")
+
+# add dt to seurat obj
+random1@reductions$dt = CreateDimReducObject(embeddings = dt, key = "DT_", assay = 'RNA')
+
+# add pseudotime to srat
+random1$Pseudotime = pData(cds)$Pseudotime
+
+# save seurat random obj
+saveRDS(random1, file = here::here('output/04.rm_cells/seurat_cd8.random1.rds'))
+
+# and h5ad
+sceasy::convertFormat(random1, from="seurat", to="anndata",
+                      main_layer = 'counts',
+                      outFile=here::here('output/04.rm_cells', paste0('seurat_cd8.random1', '.h5ad')))
+
+# save for fast reading later
+saveRDS(cds, file = here::here('output/04.rm_cells/monocle2_cd8.random1.rds'))
+```
+
+Load cds directly
+
+```{r load-rds-random1, cache=FALSE}
+cds1 = readRDS(here::here('output/04.rm_cells/monocle2_cd8.random1.rds'))
+seurat = readRDS(here::here('output/04.rm_cells/seurat_cd8.random1.rds'))
+
+cds1
+```
+
+### State/Pseudotime
+
+```{r plot-state-random1, fig.height=7, fig.width=8}
+plot_cell_trajectory(cds1, color_by = "State")
+```
+
+```{r plot-pseudotime-random1, fig.height=7, fig.width=8}
+plot_cell_trajectory(cds1, color_by = "Pseudotime")
+```
+
+### Cluster
+
+```{r plot-cluster-random1, fig.height=8, fig.width=8}
+dt = t(reducedDimS(cds1))
+colnames(dt) = c("DT1", "DT2")
+
+# Adding cluster label to center of cluster on UMAP
+dt_label = dt %>%
+  as.data.frame() %>%
+  rownames_to_column("barcode") %>%
+  left_join(cell_meta, by = "barcode") %>%
+  group_by(seurat_clusters) %>%
+  summarise(x=median(DT1), y=median(DT2))
+
+plot_cell_trajectory(cds1, color_by = "seurat_clusters", cell_size = 1) +
+  geom_text_repel(data = dt_label, aes(label = seurat_clusters, x, y)) +
+  scale_color_manual(values = cluster_color_maps) +
+  theme(legend.position = "none")
+```
+
+### Level 2
+
+```{r plot-level-2-random1, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds1, color_by = "level_2", cell_size = 1) +
+  scale_color_manual(values = t_level_2_color) +
+  guides(colour = guide_legend(override.aes = list(size=5)))
+```
+
+```{r plot-level-2-tree-random1, fig.height=8, fig.width=8}
+plot_complex_cell_trajectory(cds1, color_by = "level_2", cell_size = 1) +
+    scale_color_manual(values = t_level_2_color) +
+  guides(colour = guide_legend(override.aes = list(size=5)))
+```
+
+### Level 3
+
+```{r plot-finalAnno-random1, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds1, color_by = "level_3", cell_size = 1) +
+    scale_color_manual(values = t_level_3_color) +
+  guides(colour = guide_legend(override.aes = list(size=5)))
+```
+
+```{r plot-level-3-tree-random1, fig.height=8, fig.width=10}
+plot_complex_cell_trajectory(cds1, color_by = "level_3", cell_size = 1) +
+    scale_color_manual(values = t_level_3_color) +
+  guides(colour = guide_legend(override.aes = list(size=5)))
+```
+
+### Origin4
+
+```{r plot-Origin4-random1, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds1, color_by = "Origin4", cell_size = 1) +
+    scale_color_manual(values = origin4_color_maps)
+```
+
+### Origin2_n
+
+```{r plot-Origin2-random1, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds1, color_by = "Origin2_n", cell_size =1) +
+    scale_color_manual(values = origin2_color_maps)
+```
+
+### Tissue
+
+```{r}
+table(phenoData(cds1)@data$Tissue)
+```
+
+```{r plot-tissue-random1, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds1, color_by = "Tissue", cell_size = 1) +
+    scale_color_manual(values = tissue_color_maps)
+```
+
+### Patient
+
+```{r}
+table(phenoData(cds1)@data$Patient)
+```
+
+```{r plot-patient-random1, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds1, color_by = "Patient", cell_size = 1) +
+    scale_color_manual(values = patient_color_maps)
+```
+
+### Genes
+
+SOX4 expression
+
+```{r , fig.height=4.5, fig.width=5}
+FeaturePlot(seurat, features = c("SOX4"), reduction = "dt")
+```
+
+FOXP3 expression
+
+```{r , fig.height=4.5, fig.width=5}
+Idents(seurat) <- "level_3"
+FeaturePlot(seurat, features = c("FOXP3"), label = TRUE)
+```
+
+```{r , fig.height=4.5, fig.width=5}
+VlnPlot(seurat, features = c("FOXP3"), group.by = "level_3") +
+  NoLegend()
+```
+
+## Random 2 {.tabset}
+
+```{r prepare-cds-random2, eval=FALSE}
+seurat = readRDS(here::here('output/04.rm_cells/seurat_cd8.rds'))
+seurat
+
+set.seed(2)
+random2 = subset(seurat, downsample=300, seed = NULL)
+
+# Extract data, phenotype data, and feature data from the SeuratObject
+expr_matrix = GetAssayData(random2, assay = 'RNA', slot = "counts")
+cell_metadata = new("AnnotatedDataFrame", data = random2@meta.data)
+gene_annotation = data.frame(gene_short_name = row.names(expr_matrix), row.names = row.names(expr_matrix))
+gene_annotation <- new("AnnotatedDataFrame", data = gene_annotation)
+
+# Construct monocle CellDataSet object
+cds <- newCellDataSet(expr_matrix, phenoData = cell_metadata, featureData = gene_annotation)
+
+# Normalize the count data
+cds <- estimateSizeFactors(cds)
+
+# Calculate dispersions to filter for highly variable genes
+cds <- estimateDispersions(cds)
+
+# Constructing Single Cell Trajectories
+random2 = FindVariableFeatures(random2, selection.method = 'vst', nfeatures = 2000)
+hvg_mask = VariableFeatures(random2)
+
+cds <- setOrderingFilter(cds, hvg_mask)
+cds <- reduceDimension(cds, max_components = 2, method = "DDRTree")
+cds <- orderCells(cds)
+
+# pseudotime
+GM_state <- function(cds){
+  if (length(unique(pData(cds)$State)) > 1){
+    T0_counts <- table(pData(cds)$State, pData(cds)$level_3)[,"CD8-C8-Tn"]
+    return(as.numeric(names(T0_counts)[which
+          (T0_counts == max(T0_counts))]))
+  } else {
+    return (1)
+  }
+}
+#GM_state(cds1)
+cds <- orderCells(cds, root_state = GM_state(cds))
+
+# get DDRtree component
+dt = t(reducedDimS(cds))
+colnames(dt) = c("DT1", "DT2")
+
+# add dt to seurat obj
+random2@reductions$dt = CreateDimReducObject(embeddings = dt, key = "DT_", assay = 'RNA')
+
+# add pseudotime to srat
+random2$Pseudotime = pData(cds)$Pseudotime
+
+# save seurat random obj
+saveRDS(random2, file = here::here('output/04.rm_cells/seurat_cd8.random2.rds'))
+
+# and h5ad
+sceasy::convertFormat(random2, from="seurat", to="anndata",
+                      main_layer = 'counts',
+                      outFile=here::here('output/04.rm_cells', paste0('seurat_cd8.random2', '.h5ad')))
+
+# save for fast reading later
+saveRDS(cds, file = here::here('output/04.rm_cells/monocle2_cd8.random2.rds'))
+```
+
+Load cds directly
+
+```{r load-rds-random2, cache=FALSE}
+cds2 = readRDS(here::here('output/04.rm_cells/monocle2_cd8.random2.rds'))
+seurat = readRDS(here::here('output/04.rm_cells/seurat_cd8.random2.rds'))
+
+cds2
+```
+
+### State/Pseudotime
+
+```{r plot-state-random2, fig.height=7, fig.width=8}
+plot_cell_trajectory(cds2, color_by = "State")
+```
+
+```{r plot-pseudotime-random2, fig.height=7, fig.width=8}
+plot_cell_trajectory(cds2, color_by = "Pseudotime")
+```
+
+### Cluster
+
+```{r plot-cluster-random2, fig.height=8, fig.width=8}
+dt = t(reducedDimS(cds2))
+colnames(dt) = c("DT1", "DT2")
+
+# Adding cluster label to center of cluster on UMAP
+dt_label = dt %>%
+  as.data.frame() %>%
+  rownames_to_column("barcode") %>%
+  left_join(cell_meta, by = "barcode") %>%
+  group_by(seurat_clusters) %>%
+  summarise(x=median(DT1), y=median(DT2))
+
+plot_cell_trajectory(cds2, color_by = "seurat_clusters", cell_size = 1) +
+  geom_text_repel(data = dt_label, aes(label = seurat_clusters, x, y)) +
+  scale_color_manual(values = cluster_color_maps) +
+  theme(legend.position = "none")
+```
+
+### Level 2
+
+```{r plot-level-2-random2, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds2, color_by = "level_2", cell_size = 1) +
+  scale_color_manual(values = t_level_2_color) +
+  guides(colour = guide_legend(override.aes = list(size=5)))
+```
+
+```{r plot-level-2-tree-random2, fig.height=8, fig.width=8}
+plot_complex_cell_trajectory(cds2, color_by = "level_2", cell_size = 1) +
+    scale_color_manual(values = t_level_2_color) +
+  guides(colour = guide_legend(override.aes = list(size=5)))
+```
+
+### Level 3
+
+```{r plot-finalAnno-random2, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds2, color_by = "level_3", cell_size = 1) +
+    scale_color_manual(values = t_level_3_color) +
+  guides(colour = guide_legend(override.aes = list(size=5)))
+```
+
+```{r plot-level-3-tree-random2, fig.height=8, fig.width=10}
+plot_complex_cell_trajectory(cds2, color_by = "level_3", cell_size = 1) +
+    scale_color_manual(values = t_level_3_color) +
+  guides(colour = guide_legend(override.aes = list(size=5)))
+```
+
+### Origin4
+
+```{r plot-Origin4-random2, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds2, color_by = "Origin4", cell_size = 1) +
+    scale_color_manual(values = origin4_color_maps)
+```
+
+### Origin2_n
+
+```{r plot-Origin2-random2, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds2, color_by = "Origin2_n", cell_size =1) +
+    scale_color_manual(values = origin2_color_maps)
+```
+
+### Tissue
+
+```{r}
+table(phenoData(cds2)@data$Tissue)
+```
+
+```{r plot-tissue-random2, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds2, color_by = "Tissue", cell_size = 1) +
+    scale_color_manual(values = tissue_color_maps)
+```
+
+### Patient
+
+```{r}
+table(phenoData(cds2)@data$Patient)
+```
+
+```{r plot-patient-random2, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds2, color_by = "Patient", cell_size = 1) +
+    scale_color_manual(values = patient_color_maps)
+```
+
+### Genes
+
+SOX4 expression
+
+```{r , fig.height=4.5, fig.width=5}
+FeaturePlot(seurat, features = c("SOX4"), reduction = "dt")
+```
+
+FOXP3 expression
+
+```{r , fig.height=4.5, fig.width=5}
+Idents(seurat) <- "level_3"
+FeaturePlot(seurat, features = c("FOXP3"), label = TRUE)
+```
+
+```{r , fig.height=4.5, fig.width=5}
+VlnPlot(seurat, features = c("FOXP3"), group.by = "level_3") +
+  NoLegend()
+```
+
+## Random 3 {.tabset}
+
+```{r prepare-cds-random3, eval=FALSE}
+seurat = readRDS(here::here('output/04.rm_cells/seurat_cd8.rds'))
+seurat
+
+set.seed(3)
+random3 = subset(seurat, downsample=300, seed = NULL)
+
+# Extract data, phenotype data, and feature data from the SeuratObject
+expr_matrix = GetAssayData(random3, assay = 'RNA', slot = "counts")
+cell_metadata = new("AnnotatedDataFrame", data = random3@meta.data)
+gene_annotation = data.frame(gene_short_name = row.names(expr_matrix), row.names = row.names(expr_matrix))
+gene_annotation <- new("AnnotatedDataFrame", data = gene_annotation)
+
+# Construct monocle CellDataSet object
+cds <- newCellDataSet(expr_matrix, phenoData = cell_metadata, featureData = gene_annotation)
+
+# Normalize the count data
+cds <- estimateSizeFactors(cds)
+
+# Calculate dispersions to filter for highly variable genes
+cds <- estimateDispersions(cds)
+
+# Constructing Single Cell Trajectories
+random3 = FindVariableFeatures(random3, selection.method = 'vst', nfeatures = 2000)
+hvg_mask = VariableFeatures(random3)
+
+cds <- setOrderingFilter(cds, hvg_mask)
+cds <- reduceDimension(cds, max_components = 2, method = "DDRTree")
+cds <- orderCells(cds)
+
+# pseudotime
+GM_state <- function(cds){
+  if (length(unique(pData(cds)$State)) > 1){
+    T0_counts <- table(pData(cds)$State, pData(cds)$level_3)[,"CD8-C8-Tn"]
+    return(as.numeric(names(T0_counts)[which
+          (T0_counts == max(T0_counts))]))
+  } else {
+    return (1)
+  }
+}
+#GM_state(cds)
+cds <- orderCells(cds, root_state = GM_state(cds))
+
+# get DDRtree component
+dt = t(reducedDimS(cds))
+colnames(dt) = c("DT1", "DT2")
+
+# add dt to seurat obj
+random3@reductions$dt = CreateDimReducObject(embeddings = dt, key = "DT_", assay = 'RNA')
+
+# add pseudotime to srat
+random3$Pseudotime = pData(cds)$Pseudotime
+
+# save seurat random obj
+saveRDS(random3, file = here::here('output/04.rm_cells/seurat_cd8.random3.rds'))
+
+# and h5ad
+sceasy::convertFormat(random3, from="seurat", to="anndata",
+                      main_layer = 'counts',
+                      outFile=here::here('output/04.rm_cells', paste0('seurat_cd8.random3', '.h5ad')))
+
+# save for fast reading later
+saveRDS(cds, file = here::here('output/04.rm_cells/monocle2_cd8.random3.rds'))
+```
+
+Load cds directly
+
+```{r load-rds-random3, cache=FALSE}
+cds3 = readRDS(here::here('output/04.rm_cells/monocle2_cd8.random3.rds'))
+seurat = readRDS(here::here('output/04.rm_cells/seurat_cd8.random3.rds'))
+
+cds3
+```
+
+### State/Pseudotime
+
+```{r plot-state-random3, fig.height=7, fig.width=8}
+plot_cell_trajectory(cds3, color_by = "State")
+```
+
+```{r plot-pseudotime-random3, fig.height=7, fig.width=8}
+plot_cell_trajectory(cds3, color_by = "Pseudotime")
+```
+
+### Cluster
+
+```{r plot-cluster-random3, fig.height=8, fig.width=8}
+dt = t(reducedDimS(cds3))
+colnames(dt) = c("DT1", "DT2")
+
+# Adding cluster label to center of cluster on UMAP
+dt_label = dt %>%
+  as.data.frame() %>%
+  rownames_to_column("barcode") %>%
+  left_join(cell_meta, by = "barcode") %>%
+  group_by(seurat_clusters) %>%
+  summarise(x=median(DT1), y=median(DT2))
+
+plot_cell_trajectory(cds3, color_by = "seurat_clusters", cell_size = 1) +
+  geom_text_repel(data = dt_label, aes(label = seurat_clusters, x, y)) +
+  scale_color_manual(values = cluster_color_maps) +
+  theme(legend.position = "none")
+```
+
+### Level 2
+
+```{r plot-level-2-random3, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds3, color_by = "level_2", cell_size = 1) +
+  scale_color_manual(values = t_level_2_color) +
+  guides(colour = guide_legend(override.aes = list(size=5)))
+```
+
+```{r plot-level-2-tree-random3, fig.height=8, fig.width=8}
+plot_complex_cell_trajectory(cds3, color_by = "level_2", cell_size = 1) +
+    scale_color_manual(values = t_level_2_color) +
+  guides(colour = guide_legend(override.aes = list(size=5)))
+```
+
+### Level 3
+
+```{r plot-finalAnno-random3, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds3, color_by = "level_3", cell_size = 1) +
+    scale_color_manual(values = t_level_3_color) +
+  guides(colour = guide_legend(override.aes = list(size=5)))
+```
+
+```{r plot-level-3-tree-random3, fig.height=8, fig.width=10}
+plot_complex_cell_trajectory(cds3, color_by = "level_3", cell_size = 1) +
+    scale_color_manual(values = t_level_3_color) +
+  guides(colour = guide_legend(override.aes = list(size=5)))
+```
+
+### Origin4
+
+```{r plot-Origin4-random3, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds3, color_by = "Origin4", cell_size = 1) +
+    scale_color_manual(values = origin4_color_maps)
+```
+
+### Origin2_n
+
+```{r plot-Origin2-random3, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds3, color_by = "Origin2_n", cell_size =1) +
+    scale_color_manual(values = origin2_color_maps)
+```
+
+### Tissue
+
+```{r}
+table(phenoData(cds3)@data$Tissue)
+```
+
+```{r plot-tissue-random3, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds3, color_by = "Tissue", cell_size = 1) +
+    scale_color_manual(values = tissue_color_maps)
+```
+
+### Patient
+
+```{r}
+table(phenoData(cds3)@data$Patient)
+```
+
+```{r plot-patient-random3, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds3, color_by = "Patient", cell_size = 1) +
+    scale_color_manual(values = patient_color_maps)
+```
+
+### Genes
+
+SOX4 expression
+
+```{r , fig.height=4.5, fig.width=5}
+FeaturePlot(seurat, features = c("SOX4"), reduction = "dt")
+```
+
+FOXP3 expression
+
+```{r , fig.height=4.5, fig.width=5}
+Idents(seurat) <- "level_3"
+FeaturePlot(seurat, features = c("FOXP3"), label = TRUE)
+```
+
+```{r , fig.height=4.5, fig.width=5}
+VlnPlot(seurat, features = c("FOXP3"), group.by = "level_3") +
+  NoLegend()
+```
+
+## Random 4 {.tabset}
+
+```{r prepare-cds-random4, eval=FALSE}
+seurat = readRDS(here::here('output/04.rm_cells/seurat_cd8.rds'))
+seurat
+
+set.seed(4)
+random4 = subset(seurat, downsample=300, seed = NULL)
+
+# Extract data, phenotype data, and feature data from the SeuratObject
+expr_matrix = GetAssayData(random4, assay = 'RNA', slot = "counts")
+cell_metadata = new("AnnotatedDataFrame", data = random4@meta.data)
+gene_annotation = data.frame(gene_short_name = row.names(expr_matrix), row.names = row.names(expr_matrix))
+gene_annotation <- new("AnnotatedDataFrame", data = gene_annotation)
+
+# Construct monocle CellDataSet object
+cds <- newCellDataSet(expr_matrix, phenoData = cell_metadata, featureData = gene_annotation)
+
+# Normalize the count data
+cds <- estimateSizeFactors(cds)
+
+# Calculate dispersions to filter for highly variable genes
+cds <- estimateDispersions(cds)
+
+# Constructing Single Cell Trajectories
+random4 = FindVariableFeatures(random4, selection.method = 'vst', nfeatures = 2000)
+hvg_mask = VariableFeatures(random4)
+
+cds <- setOrderingFilter(cds, hvg_mask)
+cds <- reduceDimension(cds, max_components = 2, method = "DDRTree")
+cds <- orderCells(cds)
+
+# pseudotime
+GM_state <- function(cds){
+  if (length(unique(pData(cds)$State)) > 1){
+    T0_counts <- table(pData(cds)$State, pData(cds)$level_3)[,"CD8-C8-Tn"]
+    return(as.numeric(names(T0_counts)[which
+          (T0_counts == max(T0_counts))]))
+  } else {
+    return (1)
+  }
+}
+#GM_state(cds1)
+cds <- orderCells(cds, root_state = GM_state(cds))
+
+# get DDRtree component
+dt = t(reducedDimS(cds))
+colnames(dt) = c("DT1", "DT2")
+
+# add dt to seurat obj
+random4@reductions$dt = CreateDimReducObject(embeddings = dt, key = "DT_", assay = 'RNA')
+
+# add pseudotime to srat
+random4$Pseudotime = pData(cds)$Pseudotime
+
+# save seurat random obj
+saveRDS(random4, file = here::here('output/04.rm_cells/seurat_cd8.random4.rds'))
+
+# and h5ad
+sceasy::convertFormat(random4, from="seurat", to="anndata",
+                      main_layer = 'counts',
+                      outFile=here::here('output/04.rm_cells', paste0('seurat_cd8.random4', '.h5ad')))
+
+# save for fast reading later
+saveRDS(cds, file = here::here('output/04.rm_cells/monocle2_cd8.random4.rds'))
+```
+
+Load cds directly
+
+```{r load-rds-random4, cache=FALSE}
+cds4 = readRDS(here::here('output/04.rm_cells/monocle2_cd8.random4.rds'))
+seurat = readRDS(here::here('output/04.rm_cells/seurat_cd8.random4.rds'))
+
+cds4
+```
+
+### State/Pseudotime
+
+```{r plot-state-random4, fig.height=7, fig.width=8}
+plot_cell_trajectory(cds4, color_by = "State")
+```
+
+```{r plot-pseudotime-random4, fig.height=7, fig.width=8}
+plot_cell_trajectory(cds4, color_by = "Pseudotime")
+```
+
+### Cluster
+
+```{r plot-cluster-random4, fig.height=8, fig.width=8}
+dt = t(reducedDimS(cds4))
+colnames(dt) = c("DT1", "DT2")
+
+# Adding cluster label to center of cluster on UMAP
+dt_label = dt %>%
+  as.data.frame() %>%
+  rownames_to_column("barcode") %>%
+  left_join(cell_meta, by = "barcode") %>%
+  group_by(seurat_clusters) %>%
+  summarise(x=median(DT1), y=median(DT2))
+
+plot_cell_trajectory(cds4, color_by = "seurat_clusters", cell_size = 1) +
+  geom_text_repel(data = dt_label, aes(label = seurat_clusters, x, y)) +
+  scale_color_manual(values = cluster_color_maps) +
+  theme(legend.position = "none")
+```
+
+### Level 2
+
+```{r plot-level-2-random4, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds4, color_by = "level_2", cell_size = 1) +
+  scale_color_manual(values = t_level_2_color) +
+  guides(colour = guide_legend(override.aes = list(size=5)))
+```
+
+```{r plot-level-2-tree-random4, fig.height=8, fig.width=8}
+plot_complex_cell_trajectory(cds4, color_by = "level_2", cell_size = 1) +
+    scale_color_manual(values = t_level_2_color) +
+  guides(colour = guide_legend(override.aes = list(size=5)))
+```
+
+### Level 3
+
+```{r plot-finalAnno-random4, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds4, color_by = "level_3", cell_size = 1) +
+    scale_color_manual(values = t_level_3_color) +
+  guides(colour = guide_legend(override.aes = list(size=5)))
+```
+
+```{r plot-level-3-tree-random4, fig.height=8, fig.width=10}
+plot_complex_cell_trajectory(cds4, color_by = "level_3", cell_size = 1) +
+    scale_color_manual(values = t_level_3_color) +
+  guides(colour = guide_legend(override.aes = list(size=5)))
+```
+
+### Origin4
+
+```{r plot-Origin4-random4, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds4, color_by = "Origin4", cell_size = 1) +
+    scale_color_manual(values = origin4_color_maps)
+```
+
+### Origin2_n
+
+```{r plot-Origin2-random4, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds4, color_by = "Origin2_n", cell_size =1) +
+    scale_color_manual(values = origin2_color_maps)
+```
+
+### Tissue
+
+```{r}
+table(phenoData(cds4)@data$Tissue)
+```
+
+```{r plot-tissue-random4, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds4, color_by = "Tissue", cell_size = 1) +
+    scale_color_manual(values = tissue_color_maps)
+```
+
+### Patient
+
+```{r}
+table(phenoData(cds4)@data$Patient)
+```
+
+```{r plot-patient-random4, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds4, color_by = "Patient", cell_size = 1) +
+    scale_color_manual(values = patient_color_maps)
+```
+
+### Genes
+
+SOX4 expression
+
+```{r , fig.height=4.5, fig.width=5}
+FeaturePlot(seurat, features = c("SOX4"), reduction = "dt")
+```
+
+FOXP3 expression
+
+```{r , fig.height=4.5, fig.width=5}
+Idents(seurat) <- "level_3"
+FeaturePlot(seurat, features = c("FOXP3"), label = TRUE)
+```
+
+```{r , fig.height=4.5, fig.width=5}
+VlnPlot(seurat, features = c("FOXP3"), group.by = "level_3") +
+  NoLegend()
+```
+
+## Random 5 {.tabset}
+
+```{r prepare-cds-random5, eval=FALSE}
+seurat = readRDS(here::here('output/04.rm_cells/seurat_cd8.rds'))
+seurat
+
+set.seed(5)
+random5 = subset(seurat, downsample=300, seed = NULL)
+
+# Extract data, phenotype data, and feature data from the SeuratObject
+expr_matrix = GetAssayData(random5, assay = 'RNA', slot = "counts")
+cell_metadata = new("AnnotatedDataFrame", data = random5@meta.data)
+gene_annotation = data.frame(gene_short_name = row.names(expr_matrix), row.names = row.names(expr_matrix))
+gene_annotation <- new("AnnotatedDataFrame", data = gene_annotation)
+
+# Construct monocle CellDataSet object
+cds <- newCellDataSet(expr_matrix, phenoData = cell_metadata, featureData = gene_annotation)
+
+# Normalize the count data
+cds <- estimateSizeFactors(cds)
+
+# Calculate dispersions to filter for highly variable genes
+cds <- estimateDispersions(cds)
+
+# Constructing Single Cell Trajectories
+random5 = FindVariableFeatures(random5, selection.method = 'vst', nfeatures = 2000)
+hvg_mask = VariableFeatures(random5)
+
+cds <- setOrderingFilter(cds, hvg_mask)
+cds <- reduceDimension(cds, max_components = 2, method = "DDRTree")
+cds <- orderCells(cds)
+
+# pseudotime
+GM_state <- function(cds){
+  if (length(unique(pData(cds)$State)) > 1){
+    T0_counts <- table(pData(cds)$State, pData(cds)$level_3)[,"CD8-C8-Tn"]
+    return(as.numeric(names(T0_counts)[which
+          (T0_counts == max(T0_counts))]))
+  } else {
+    return (1)
+  }
+}
+#GM_state(cds1)
+cds <- orderCells(cds, root_state = GM_state(cds))
+
+# get DDRtree component
+dt = t(reducedDimS(cds))
+colnames(dt) = c("DT1", "DT2")
+
+# add dt to seurat obj
+random5@reductions$dt = CreateDimReducObject(embeddings = dt, key = "DT_", assay = 'RNA')
+
+# add pseudotime to srat
+random5$Pseudotime = pData(cds)$Pseudotime
+
+# save seurat random obj
+saveRDS(random5, file = here::here('output/04.rm_cells/seurat_cd8.random5.rds'))
+
+# and h5ad
+sceasy::convertFormat(random5, from="seurat", to="anndata",
+                      main_layer = 'counts',
+                      outFile=here::here('output/04.rm_cells', paste0('seurat_cd8.random5', '.h5ad')))
+
+# save for fast reading later
+saveRDS(cds, file = here::here('output/04.rm_cells/monocle2_cd8.random5.rds'))
+```
+
+Load cds directly
+
+```{r load-rds-random5, cache=FALSE}
+cds5 = readRDS(here::here('output/04.rm_cells/monocle2_cd8.random5.rds'))
+seurat = readRDS(here::here('output/04.rm_cells/seurat_cd8.random5.rds'))
+
+cds5
+```
+
+### State/Pseudotime
+
+```{r plot-state-random5, fig.height=7, fig.width=8}
+plot_cell_trajectory(cds5, color_by = "State")
+```
+
+```{r plot-pseudotime-random5, fig.height=7, fig.width=8}
+plot_cell_trajectory(cds5, color_by = "Pseudotime")
+```
+
+### Cluster
+
+```{r plot-cluster-random5, fig.height=8, fig.width=8}
+dt = t(reducedDimS(cds5))
+colnames(dt) = c("DT1", "DT2")
+
+# Adding cluster label to center of cluster on UMAP
+dt_label = dt %>%
+  as.data.frame() %>%
+  rownames_to_column("barcode") %>%
+  left_join(cell_meta, by = "barcode") %>%
+  group_by(seurat_clusters) %>%
+  summarise(x=median(DT1), y=median(DT2))
+
+plot_cell_trajectory(cds5, color_by = "seurat_clusters", cell_size = 1) +
+  geom_text_repel(data = dt_label, aes(label = seurat_clusters, x, y)) +
+  scale_color_manual(values = cluster_color_maps) +
+  theme(legend.position = "none")
+```
+
+### Level 2
+
+```{r plot-level-2-random5, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds5, color_by = "level_2", cell_size = 1) +
+  scale_color_manual(values = t_level_2_color) +
+  guides(colour = guide_legend(override.aes = list(size=5)))
+```
+
+```{r plot-level-2-tree-random5, fig.height=8, fig.width=8}
+plot_complex_cell_trajectory(cds5, color_by = "level_2", cell_size = 1) +
+    scale_color_manual(values = t_level_2_color) +
+  guides(colour = guide_legend(override.aes = list(size=5)))
+```
+
+### Level 3
+
+```{r plot-finalAnno-random5, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds5, color_by = "level_3", cell_size = 1) +
+    scale_color_manual(values = t_level_3_color) +
+  guides(colour = guide_legend(override.aes = list(size=5)))
+```
+
+```{r plot-level-3-tree-random5, fig.height=8, fig.width=10}
+plot_complex_cell_trajectory(cds5, color_by = "level_3", cell_size = 1) +
+    scale_color_manual(values = t_level_3_color) +
+  guides(colour = guide_legend(override.aes = list(size=5)))
+```
+
+### Origin4
+
+```{r plot-Origin4-random5, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds5, color_by = "Origin4", cell_size = 1) +
+    scale_color_manual(values = origin4_color_maps)
+```
+
+### Origin2_n
+
+```{r plot-Origin2-random5, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds5, color_by = "Origin2_n", cell_size =1) +
+    scale_color_manual(values = origin2_color_maps)
+```
+
+### Tissue
+
+```{r}
+table(phenoData(cds5)@data$Tissue)
+```
+
+```{r plot-tissue-random5, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds5, color_by = "Tissue", cell_size = 1) +
+    scale_color_manual(values = tissue_color_maps)
+```
+
+### Patient
+
+```{r}
+table(phenoData(cds5)@data$Patient)
+```
+
+```{r plot-patient-random5, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds5, color_by = "Patient", cell_size = 1) +
+    scale_color_manual(values = patient_color_maps)
+```
+
+### Genes
+
+SOX4 expression
+
+```{r , fig.height=4.5, fig.width=5}
+FeaturePlot(seurat, features = c("SOX4"), reduction = "dt")
+```
+
+FOXP3 expression
+
+```{r , fig.height=4.5, fig.width=5}
+Idents(seurat) <- "level_3"
+FeaturePlot(seurat, features = c("FOXP3"), label = TRUE)
+```
+
+```{r , fig.height=4.5, fig.width=5}
+VlnPlot(seurat, features = c("FOXP3"), group.by = "level_3") +
+  NoLegend()
+```
+
+## Random 6 {.tabset}
+
+```{r prepare-cds-random6, eval=FALSE}
+seurat = readRDS(here::here('output/04.rm_cells/seurat_cd8.rds'))
+seurat
+
+set.seed(6)
+random6 = subset(seurat, downsample=300, seed = NULL)
+
+# Extract data, phenotype data, and feature data from the SeuratObject
+expr_matrix = GetAssayData(random6, assay = 'RNA', slot = "counts")
+cell_metadata = new("AnnotatedDataFrame", data = random6@meta.data)
+gene_annotation = data.frame(gene_short_name = row.names(expr_matrix), row.names = row.names(expr_matrix))
+gene_annotation <- new("AnnotatedDataFrame", data = gene_annotation)
+
+# Construct monocle CellDataSet object
+cds <- newCellDataSet(expr_matrix, phenoData = cell_metadata, featureData = gene_annotation)
+
+# Normalize the count data
+cds <- estimateSizeFactors(cds)
+
+# Calculate dispersions to filter for highly variable genes
+cds <- estimateDispersions(cds)
+
+# Constructing Single Cell Trajectories
+random6 = FindVariableFeatures(random6, selection.method = 'vst', nfeatures = 2000)
+hvg_mask = VariableFeatures(random6)
+
+cds <- setOrderingFilter(cds, hvg_mask)
+cds <- reduceDimension(cds, max_components = 2, method = "DDRTree")
+cds <- orderCells(cds)
+
+# pseudotime
+GM_state <- function(cds){
+  if (length(unique(pData(cds)$State)) > 1){
+    T0_counts <- table(pData(cds)$State, pData(cds)$level_3)[,"CD8-C8-Tn"]
+    return(as.numeric(names(T0_counts)[which
+          (T0_counts == max(T0_counts))]))
+  } else {
+    return (1)
+  }
+}
+#GM_state(cds1)
+cds <- orderCells(cds, root_state = GM_state(cds))
+
+# get DDRtree component
+dt = t(reducedDimS(cds))
+colnames(dt) = c("DT1", "DT2")
+
+# add dt to seurat obj
+random6@reductions$dt = CreateDimReducObject(embeddings = dt, key = "DT_", assay = 'RNA')
+
+# add pseudotime to srat
+random6$Pseudotime = pData(cds)$Pseudotime
+
+# save seurat random obj
+saveRDS(random6, file = here::here('output/04.rm_cells/seurat_cd8.random6.rds'))
+
+# and h5ad
+sceasy::convertFormat(random6, from="seurat", to="anndata",
+                      main_layer = 'counts',
+                      outFile=here::here('output/04.rm_cells', paste0('seurat_cd8.random6', '.h5ad')))
+
+# save for fast reading later
+saveRDS(cds, file = here::here('output/04.rm_cells/monocle2_cd8.random6.rds'))
+```
+
+Load cds directly
+
+```{r load-rds-random6, cache=FALSE}
+cds6 = readRDS(here::here('output/04.rm_cells/monocle2_cd8.random6.rds'))
+seurat = readRDS(here::here('output/04.rm_cells/seurat_cd8.random6.rds'))
+
+cds6
+```
+
+### State/Pseudotime
+
+```{r plot-state-random6, fig.height=7, fig.width=8}
+plot_cell_trajectory(cds6, color_by = "State")
+```
+
+```{r plot-pseudotime-random6, fig.height=7, fig.width=8}
+plot_cell_trajectory(cds6, color_by = "Pseudotime")
+```
+
+### Cluster
+
+```{r plot-cluster-random6, fig.height=8, fig.width=8}
+dt = t(reducedDimS(cds6))
+colnames(dt) = c("DT1", "DT2")
+
+# Adding cluster label to center of cluster on UMAP
+dt_label = dt %>%
+  as.data.frame() %>%
+  rownames_to_column("barcode") %>%
+  left_join(cell_meta, by = "barcode") %>%
+  group_by(seurat_clusters) %>%
+  summarise(x=median(DT1), y=median(DT2))
+
+plot_cell_trajectory(cds6, color_by = "seurat_clusters", cell_size = 1) +
+  geom_text_repel(data = dt_label, aes(label = seurat_clusters, x, y)) +
+  scale_color_manual(values = cluster_color_maps) +
+  theme(legend.position = "none")
+```
+
+### Level 2
+
+```{r plot-level-2-random6, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds6, color_by = "level_2", cell_size = 1) +
+  scale_color_manual(values = t_level_2_color) +
+  guides(colour = guide_legend(override.aes = list(size=5)))
+```
+
+```{r plot-level-2-tree-random6, fig.height=8, fig.width=8}
+plot_complex_cell_trajectory(cds6, color_by = "level_2", cell_size = 1) +
+    scale_color_manual(values = t_level_2_color) +
+  guides(colour = guide_legend(override.aes = list(size=5)))
+```
+
+### Level 3
+
+```{r plot-finalAnno-random6, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds6, color_by = "level_3", cell_size = 1) +
+    scale_color_manual(values = t_level_3_color) +
+  guides(colour = guide_legend(override.aes = list(size=5)))
+```
+
+```{r plot-level-3-tree-random6, fig.height=8, fig.width=10}
+plot_complex_cell_trajectory(cds6, color_by = "level_3", cell_size = 1) +
+    scale_color_manual(values = t_level_3_color) +
+  guides(colour = guide_legend(override.aes = list(size=5)))
+```
+
+### Origin4
+
+```{r plot-Origin4-random6, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds6, color_by = "Origin4", cell_size = 1) +
+    scale_color_manual(values = origin4_color_maps)
+```
+
+### Origin2_n
+
+```{r plot-Origin2-random6, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds6, color_by = "Origin2_n", cell_size =1) +
+    scale_color_manual(values = origin2_color_maps)
+```
+
+### Tissue
+
+```{r}
+table(phenoData(cds6)@data$Tissue)
+```
+
+```{r plot-tissue-random6, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds6, color_by = "Tissue", cell_size = 1) +
+    scale_color_manual(values = tissue_color_maps)
+```
+
+### Patient
+
+```{r}
+table(phenoData(cds6)@data$Patient)
+```
+
+```{r plot-patient-random6, fig.height=8, fig.width=8}
+plot_cell_trajectory(cds6, color_by = "Patient", cell_size = 1) +
+    scale_color_manual(values = patient_color_maps)
+```
+
+### Genes
+
+SOX4 expression
+
+```{r , fig.height=4.5, fig.width=5}
+FeaturePlot(seurat, features = c("SOX4"), reduction = "dt")
+```
+
+FOXP3 expression
+
+```{r , fig.height=4.5, fig.width=5}
+Idents(seurat) <- "level_3"
+FeaturePlot(seurat, features = c("FOXP3"), label = TRUE)
+```
+
+```{r , fig.height=4.5, fig.width=5}
+VlnPlot(seurat, features = c("FOXP3"), group.by = "level_3") +
+  NoLegend()
+```
+
+## Session info
+

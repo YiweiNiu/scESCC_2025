@@ -1,0 +1,504 @@
+---
+title: "00.Fig.epithelia"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "00.Fig.epithelia"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = FALSE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+
+# patch
+library(patchwork)
+library(cowplot)
+my_theme <- theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+)
+geom.text.size <- 6 / (14 / 5)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+library(circlize)
+
+# color
+library(ggsci)
+
+# Seurat
+library(Seurat)
+#library(scRNAtoolVis)
+
+# enrichment
+library(clusterProfiler)
+library(org.Hs.eg.db)
+```
+
+Load code
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+## Load data
+
+Load srat
+
+```{r load-rds, cache=FALSE}
+srat <- readRDS(here::here("output/04.rm_cells/seurat_epithelia.rds"))
+Idents(srat) <- "seurat_clusters"
+srat
+```
+
+Load metadata
+
+```{r load-meta, cache=FALSE, message=FALSE, warning=FALSE}
+metadata <- read_csv(here::here("output/04.rm_cells/seurat_epithelia.cellmeta.csv")) %>%
+    mutate(cellType3 = level_1)
+sam_info <- read_csv(here::here("data/sample_info.3.csv"))
+```
+
+Load malignant percent of each cluster
+
+```{r load-malignant, cache=FALSE, message=FALSE, warning=FALSE}
+cluster_malig <- readRDS(here::here('output', "epithelia.cor_bulk", 'epi.cor_with_bulk.rds')) %>%
+  group_by(seurat_clusters, malignant) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  ungroup() %>%
+  complete(seurat_clusters, malignant, fill = list(n = 0, Percent=0)) %>%
+  filter(malignant == "Yes") %>%
+  arrange(Percent)
+```
+
+## UMAP {.tabset}
+
+### Clusters
+
+```{r fig.width=3, fig.height=3, cache=FALSE}
+p.umap.cellType <- DimPlot(srat,
+  reduction = "umap", group.by = "seurat_clusters",
+  label = TRUE, label.size = geom.text.size,
+  raster = TRUE
+) +
+  scale_color_manual(values = cluster_color_maps) +
+  labs(title = NULL) +
+  my_theme +
+  NoLegend()
+p.umap.cellType
+
+# saveRDS(p.umap.cellType, file = here::here("output", DOCNAME, "Fig.umap.cellType.rds"))
+ggsave2(p.umap.cellType,
+  filename = here::here("output", DOCNAME, "Fig.umap.cellType.pdf"),
+  height = 3, width = 3, device = cairo_pdf
+)
+```
+
+### malignant
+
+```{r fig.width=2.5, fig.height=2, cache=FALSE}
+p.umap.malignant <- DimPlot(srat,
+  reduction = "umap", group.by = "malignant", raster = TRUE
+) +
+  scale_color_manual(values = epi_malig_colors) +
+  labs(title = NULL) +
+  my_theme
+p.umap.malignant
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.umap.malignant.pdf"),
+  height = 2, width = 2.5, device=cairo_pdf
+)
+```
+
+## Malig./Non-malig.
+
+By cluster by malignant
+
+```{r fig.width=4.5, fig.height=2.6, cache=FALSE}
+p.byClusterd.byMalignant = readRDS(here::here('output', "epithelia.cor_bulk", 'epi.cor_with_bulk.rds')) %>%
+  group_by(seurat_clusters, malignant) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  ungroup() %>%
+  complete(seurat_clusters, malignant, fill = list(n = 0, Percent=0)) %>%
+  mutate(seurat_clusters = factor(seurat_clusters, levels = cluster_malig$seurat_clusters)) %>%
+  ggplot(aes(x = seurat_clusters, y = Percent, fill = malignant)) +
+  geom_col() +
+  scale_fill_manual(values = colors_2) +
+  scale_y_continuous(expand = c(0, 0)) +
+  labs(fill = NULL, y = "% of cells", x = "clusters") +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
+  geom_hline(yintercept = c(3, 70), linetype = 'dashed') +
+  my_theme +
+  theme(
+    axis.text.x = element_text(angle = 60, hjust = 1),
+    legend.margin = margin(rep(0, 4), unit = "cm"),
+    legend.spacing.y = unit(0, "cm"),
+    legend.box.margin = margin(rep(-.2, 4), unit = "cm")
+  )
+p.byClusterd.byMalignant
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.malig_percent.pdf"),
+  height = 2.6, width = 4.5, device=cairo_pdf
+)
+```
+
+### Comparison all groups
+
+#### DEG
+
+```{r load-deg, message=FALSE, warning=FALSE}
+deg <- read_csv(here::here('output', "06.epi.cmp_malig", 'epi.cmp_malig.markers.csv')) %>%
+  dplyr::rename(avg_log2FC = avg_logFC) %>%
+  mutate(cluster = factor(cluster, levels = c("NonMalig.", "PreMalig.", "Malig.")))
+```
+
+Plot Volcano
+
+```{r, fig.height=3, fig.width=3}
+p.volcano = jjVolcano(diffData = deg, cluster_size = 3, topGeneN = 5,
+          pSize = .4, base_size = 6, size = geom.text.size,
+          tile.col = epi_malig_colors,
+          legend.position = c(.2, .1)) +
+  labs(x = NULL)
+p.volcano
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.deg_malig.volcano.pdf"),
+  height = 3, width = 3, device = cairo_pdf
+)
+```
+
+#### GO {.tabset}
+
+```{r enrich, message=FALSE, warning=FALSE, fig.width=3, fig.height=3}
+cg.BP = readRDS(here::here('output', "06.epi.cmp_malig", "epi.cmp_malig.GO-BP.rds"))
+
+p.enrich_bp = dotplot(cg.BP) + 
+  scale_y_discrete(labels = function(x) str_wrap(x, width = 40)) + 
+  scale_size(range = c(0, 4)) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+p.enrich_bp
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.deg_malig.BP.pdf"),
+  height = 3, width = 3, device = cairo_pdf
+)
+```
+
+### TFs
+
+All TFs tested
+
+```{r load-de-tf-glm, message=FALSE, warning=FALSE}
+# load
+de_tf.glm_patient = readRDS(here::here("output", "06.epi.cmp_malig", "epi.cmp_malig.TFs.glm_patient.rds"))
+```
+
+Plot
+
+```{r fig.width=2, fig.height=3}
+# t_mat
+t_mat = de_tf.glm_patient$t_mat %>%
+  as.data.frame()
+
+# select rows to show
+selected_row = de_tf.glm_patient$df %>%
+  filter(p_adj < 0.05) %>% # keep only those with p_adj < 0.05
+  group_by(cluster) %>%
+  top_n(5, wt = t) %>%
+  pull(gene) %>% unique()
+
+# add RORA/RORC/BARX2, SOX4
+selected_row = c("RORA", "RORC", "BARX2", "SOX4", selected_row)
+
+# highligh
+highlight_rows = "SOX4"
+
+plot_heatmap_glm(as.matrix(t_mat[selected_row,]), cluster_columns = FALSE,
+                 highlight_rows = highlight_rows)
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.deg_malig.TFs.pdf"),
+  height = 3, width = 2, device = cairo_pdf
+)
+```
+
+
+
+## Selected genes
+
+### markers
+
+ward.D2 linkage
+
+```{r fig.width=4.5, fig.height=3}
+markers <- c(
+  # lowDiff
+  "EPCAM", "KRT5", "KRT14", "KRT15",
+  # highDiff
+  "KRT4", "KRT13", "ECM1", "SPRR3", "CNFN", "CRNN",
+  # basal layer/tumor cell
+  "TP63", "SOX2", "ITGA6", "SCPEP1",
+  # TF
+  "BARX2", "RORA", "RORC",
+  # prolif
+  "MKI67"
+)
+
+mat <- AverageExpression(srat,
+  assays = "RNA", features = markers,
+  slot = "data", verbose = F
+)$RNA
+mat <- log1p(as.matrix(mat))
+# scale
+mat_scale <- pheatmap:::scale_rows(mat)
+
+# color
+x <- floor(max(abs(mat_scale)))
+col_fun <- circlize::colorRamp2(c(-x, 0, x), c("#476fa9", "#ffffff", "#ca3226"))
+legend_name <- "Exp."
+
+ht <- ComplexHeatmap::Heatmap(mat_scale,
+  name = legend_name,
+  col = col_fun,
+  cluster_columns = TRUE,
+  clustering_method_columns = "ward.D2",
+  cluster_rows = TRUE,
+  clustering_method_rows = "ward.D2",
+  #column_dend_height = unit(10, "mm"),
+  show_row_dend = FALSE,
+  show_row_names = TRUE, show_column_names = TRUE,
+  row_names_side = "right",
+  row_names_gp = gpar(fontsize = 6, fontface = "italic"),
+  column_names_gp = gpar(fontsize = 6),
+  column_names_rot = 60,
+  column_title = NULL,
+  heatmap_legend_param = list(
+    title_position = "topcenter",
+    direction = "vertical",
+    labels_gp = gpar(fontsize = 6),
+    title_gp = gpar(fontsize = 6),
+    grid_height = unit(1.5, "mm"),
+    grid_width = unit(1.5, "mm")
+  )
+)
+# draw(ht)
+p.markers.heatmap <- plot_grid(grid.grabExpr(draw(ht)))
+p.markers.heatmap
+
+# save
+saveRDS(p.markers.heatmap, file = here::here("output", DOCNAME, "Fig.markers.heatmap.rds"))
+
+ggsave2(p.markers.heatmap,
+  filename = here::here("output", DOCNAME, "Fig.markers.heatmap.pdf"),
+  height = 3, width = 4.5, device = cairo_pdf
+)
+```
+
+### SOX2/TP63
+
+```{r fig.width=2, fig.height=3}
+p.dot_SOX2 = DotPlot(srat, features = c("SOX2", "TP63", "KRT14", "KRT5", "KRT4", "KRT13", "IVL"),
+        group.by = "malignant") +
+  labs(x = NULL, y = NULL) +
+  coord_flip() +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+p.dot_SOX2
+
+ggsave2(p.dot_SOX2,
+  filename = here::here("output", DOCNAME, "Fig.markers.dotplot_SOX2.pdf"),
+  height = 3, width = 2, device = cairo_pdf
+)
+```
+
+## monocle2
+
+Load TF activity
+
+```{r}
+aucell_res_path = '../../pySCENIC/200227_6samples'
+
+# SCENIC TFs
+aucell_tf = read_csv(file.path(aucell_res_path, 'seurat_epithelia.TF.auc_mtx.csv'))
+aucell_tf = aucell_tf %>% 
+  mutate(Regulon = str_replace(Regulon, "[(][+][)]", "")) %>% 
+  filter(Regulon %in% c("RORA", "RORC", "BARX2", "SOX4")) %>% 
+  column_to_rownames(var = 'Regulon')
+
+# t
+aucell_tf = as.data.frame(t(aucell_tf)) %>%
+  rownames_to_column("barcode")
+```
+
+Load cds directly
+
+```{r load-rds-random1, cache=FALSE}
+# monocle
+library(monocle)
+cds1 = readRDS(here::here('output/04.rm_cells/monocle2_epithelia.random1.rds'))
+srat1 = readRDS(here::here('output/04.rm_cells/seurat_epithelia.random1.rds'))
+
+cds1
+```
+
+Malignant
+
+```{r plot-Malignant_1-random1, fig.height=2.5, fig.width=2.5}
+p.monocle2_malig = plot_cell_trajectory(cds1, color_by = "malignant", cell_size = 2) +
+  scale_color_manual(values = epi_malig_colors) +
+  my_theme
+p.monocle2_malig
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.monocle2_malig.pdf"),
+  height = 2.5, width = 2.5, device = cairo_pdf
+)
+```
+
+Gene expression
+
+```{r gene-exp-random1, fig.height=1.6, fig.width=5}
+features = c("RORA", "RORC", "BARX2")
+
+p.monocle2_gene = FeaturePlot(srat1, features = features, reduction = "dt", ncol = 3) & my_theme
+p.monocle2_gene
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.monocle2_RORA_exp.pdf"),
+  height = 1.6, width = 5, device = cairo_pdf
+)
+```
+
+TF activity
+
+```{r tf-exp-random1, fig.height=1.5, fig.width=5}
+dat = FetchData(srat1, vars = c("DT_1", "DT_2")) %>%
+  rownames_to_column("barcode") %>%
+  left_join(aucell_tf, by = "barcode")
+
+p1 = dat %>%
+  ggplot(aes(x = DT_1, y = DT_2, color = RORA)) +
+  geom_point(size = .5) +
+  my_theme
+p2 = dat %>%
+  ggplot(aes(x = DT_1, y = DT_2, color = RORC)) +
+  geom_point(size = .5) +
+  my_theme
+p3 = dat %>%
+  ggplot(aes(x = DT_1, y = DT_2, color = BARX2)) +
+  geom_point(size = .5) +
+  my_theme
+p.monocle2_tf = p1 + p2 + p3 +
+  plot_layout(ncol = 3)
+p.monocle2_tf
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.monocle2_RORA_TF.pdf"),
+  height = 1.5, width = 5, device = cairo_pdf
+)
+```
+
+## CytoTRACE
+
+```{r fig.width=5, fig.height=1.6}
+result = readRDS(here::here("output", "CytoTRACE.epithelia", "CytoTRACE.res.rds"))
+
+d4p = tibble(barcode = names(result$CytoTRACE),
+       value = result$CytoTRACE) %>%
+  left_join(srat@meta.data %>% rownames_to_column("barcode"), by = 'barcode') 
+
+p1 = d4p %>%
+  filter(malignant == "NonMalig.") %>%
+  ggplot(aes(x=reorder(seurat_clusters, -value, median), y=value, fill=seurat_clusters)) +
+  geom_boxplot_jitter(outlier.jitter.width = 0.01, outlier.size = .5) +
+  scale_fill_manual(values = cluster_color_maps) +
+  labs(y= 'Predicted order', x = NULL) +
+  my_theme +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+p2 = d4p %>%
+  filter(malignant == "PreMalig.") %>%
+  ggplot(aes(x=reorder(seurat_clusters, -value, median), y=value, fill=seurat_clusters)) +
+  geom_boxplot_jitter(outlier.jitter.width = 0.01, outlier.size = .5) +
+  scale_fill_manual(values = cluster_color_maps) +
+  labs(y= NULL, x = NULL) +
+  my_theme +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+p3 = d4p %>%
+  filter(malignant == "Malig.") %>%
+  ggplot(aes(x=reorder(seurat_clusters, -value, median), y=value, fill=seurat_clusters)) +
+  geom_boxplot_jitter(outlier.jitter.width = 0.01, outlier.size = .5) +
+  scale_fill_manual(values = cluster_color_maps) +
+  labs(y= NULL, x = NULL) +
+  my_theme +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+
+p.CytoTRACE = p1 + p2 + p3 +
+  plot_layout(widths = c(9, 7, 18))
+p.CytoTRACE
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.CytoTRACE.byMalig.pdf"),
+  height = 1.6, width = 5, device = cairo_pdf
+)
+```
+
+
+## Session info
+

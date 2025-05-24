@@ -1,0 +1,205 @@
+---
+title: "monocle3.fibroblasts"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME = "monocle3.fibroblasts"
+#dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+    if (before) {
+        print(paste("Start:", Sys.time()))
+        NOW <<- Sys.time()
+    } else {
+        print(paste("Stop:", Sys.time()))
+        print(Sys.time() - NOW)
+    }
+})
+
+knitr::opts_chunk$set(
+    autodep        = TRUE,
+    cache          = FALSE,
+    cache.path     = paste0("cache/", DOCNAME, "/"),
+    cache.lazy     = FALSE, 
+    cache.comments = FALSE,
+    echo           = FALSE,
+    error          = FALSE,
+    fig.align      = "center",
+    fig.width      = 10,
+    fig.height     = 8,
+    message        = FALSE,
+    warning        = FALSE,
+    timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, warning=FALSE, message=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(ggcorrplot)
+library(pheatmap)
+library(ComplexHeatmap)
+library(circlize)
+library(ggpubr)
+library(ggplotify)
+library(ggrepel)
+
+# patch
+library(cowplot)
+theme_set(theme_cowplot(font_size = 12,
+                        rel_small = 10/12,
+                        rel_tiny = 8/12,
+                        rel_large = 12/12,
+                        font_family = "Arial"))
+library(patchwork)
+
+# color
+library(ggsci)
+
+# fonts
+library(extrafont)
+#font_import()
+#font_import(paths = "/T02Data/niuyw/.local/share/fonts")
+loadfonts(device = "pdf", quiet = TRUE)
+
+# Seurat
+library(Seurat)
+
+# monocle
+library(SeuratWrappers)
+library(monocle3)
+```
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+Load rds (save time)
+
+```{r load-rds, cache=FALSE}
+# Load seurat
+seurat = readRDS(here::here('output/04.rm_cells/seurat_fibroblasts.rds'))
+seurat
+cds = readRDS(here::here('output/04.rm_cells/monocle3_fibroblasts.rds'))
+cds
+```
+
+## Build cds
+
+```{r build-cds, cache=FALSE, eval=FALSE}
+# Load seurat
+seurat = readRDS(here::here('output/04.rm_cells/seurat_fibroblasts.rds'))
+seurat
+
+# to cds
+cds = as.cell_data_set(seurat)
+
+# Cluster cells
+cds <- cluster_cells(cds)
+
+# Constructing trajectories
+cds <- learn_graph(cds)
+
+# save
+saveRDS(cds, file = here::here('output/04.rm_cells/monocle3_fibroblasts.rds'))
+```
+
+## Cluster
+
+Cluster by Seurat or Monocle3
+
+```{r plot-cluster, fig.width=12, fig.height=5, warning=FALSE}
+# plot labeled by seurat clusters
+p1 = DimPlot(seurat, group.by = 'level_2') +
+  scale_color_manual(values = fib_level_2_color) +
+  labs(title = "Seurat level_2")
+p2 = plot_cells(cds, color_cells_by = "partition",
+                show_trajectory_graph = FALSE,
+                group_label_size = 3) +
+  labs(title = "Monocle3 partition")
+p1 + p2
+```
+
+Monocle3 partition 1
+
+```{r monocle3_partitions-1, fig.width=12, fig.height=5, cache=FALSE}
+x = subset(as.Seurat(cds), monocle3_partitions == 1)
+table(x$level_2, x$monocle3_partitions)
+```
+
+Monocle3 partition 2
+
+```{r monocle3_partitions-2, fig.width=12, fig.height=5, cache=FALSE}
+x = subset(as.Seurat(cds), monocle3_partitions == 2)
+table(x$level_2, x$monocle3_partitions)
+```
+
+## Level_3
+
+```{r plot-level_3, fig.width=11, fig.height=5}
+# plot labeled by seurat clusters
+p1 = DimPlot(seurat, group.by = 'level_3') +
+  scale_color_manual(values = fib_level_3_color) +
+  labs(title = "Seurat")
+p2 = DimPlot(seurat, group.by = 'seurat_clusters',
+             label = TRUE) +
+  scale_color_manual(values = cluster_color_maps) +
+  NoLegend() +
+  labs(title = "Seurat")
+
+p1 + p2
+```
+
+## Trajectory
+
+partition
+
+```{r Trajectory, fig.width=6, fig.height=5}
+plot_cells(cds, label_groups_by_cluster = FALSE,
+           color_cells_by = "partition",
+           label_leaves = FALSE,
+           label_branch_points = FALSE) +
+  labs(title = "Monocle3")
+```
+
+No leaves
+
+```{r , fig.width=6, fig.height=5}
+plot_cells(cds,
+           color_cells_by = "partition",
+           label_leaves = FALSE)
+```
+
+Level 3
+
+```{r , fig.width=6, fig.height=5}
+plot_cells(cds, label_groups_by_cluster = FALSE,
+           color_cells_by = "level_3",
+           label_leaves = FALSE,
+           label_branch_points = TRUE) +
+  scale_color_manual(values = fib_level_3_color)
+```
+
+No branch point
+
+```{r , fig.width=6, fig.height=5}
+plot_cells(cds,
+           color_cells_by = "level_3",
+           label_leaves = FALSE,
+           label_branch_points = FALSE) +
+  scale_color_manual(values = fib_level_3_color)
+```
+
+
+## Session info
+

@@ -1,0 +1,1271 @@
+---
+title: "vdj.tcr.clonality.cd4_cd8"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME = "vdj.tcr.clonality.cd4_cd8"
+#dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+    if (before) {
+        print(paste("Start:", Sys.time()))
+        NOW <<- Sys.time()
+    } else {
+        print(paste("Stop:", Sys.time()))
+        print(Sys.time() - NOW)
+    }
+})
+
+knitr::opts_chunk$set(
+    autodep        = TRUE,
+    cache          = FALSE,
+    cache.path     = paste0("cache/", DOCNAME, "/"),
+    cache.lazy     = FALSE, 
+    cache.comments = FALSE,
+    echo           = FALSE,
+    error          = FALSE,
+    fig.align      = "center",
+    fig.width      = 10,
+    fig.height     = 8,
+    message        = FALSE,
+    warning        = FALSE,
+    timeit         = TRUE
+)
+```
+
+Load packages
+
+```{r libaries, cache = FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(patchwork)
+library(cowplot)
+library(ComplexHeatmap)
+library(pheatmap)
+library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+library(ggcorrplot)
+library(circlize)
+theme_set(theme_cowplot(
+  font_size = 10,
+  rel_small = 8 / 10,
+  rel_tiny = 6 / 10,
+  rel_large = 10 / 10,
+  font_family = "Arial"
+))
+
+# rigde
+library(ggridges)
+
+# color
+library(ggsci)
+library(RColorBrewer)
+
+# Seurat
+library(Seurat)
+```
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+devtools::load_all('/T02Data/niuyw1/Rscir')
+```
+
+分析 TCR 的 clonal expansion
+
+**这里的分析主要参考了以下文献**：
+
+- Guo, X., Zhang, Y., Zheng, L., Zheng, C., Song, J., Zhang, Q., Kang, B., Liu, Z., Jin, L., Xing, R., et al. (2018). Global characterization of T cells in non-small-cell lung cancer by single-cell sequencing. Nature Medicine 1.
+
+- Yost, K.E., Satpathy, A.T., Wells, D.K., Qi, Y., Wang, C., Kageyama, R., McNamara, K.L., Granja, J.M., Sarin, K.Y., Brown, R.A., et al. (2019). Clonal replacement of tumor-specific T cells following PD-1 blockade. Nat Med 25, 1251–1259.
+
+## Set up
+
+Load data
+
+```{r load-data, cache=FALSE, message=FALSE, warning=FALSE}
+metadata = read_csv(here::here("output/04.rm_cells/seurat_tcells.cellmeta.csv")) %>%
+  filter(level_1 %in% c("CD4", "CD8", "Treg"))
+clones = read_csv('/niuyw-usb-disk/Projects/scESCA/cellranger/TCR/200121_6samples.clonotype_tcr.csv')
+```
+
+## Neat data
+
+Merge metadata with clonotypes
+
+```{r merge-meta-clonotypes}
+clones = clones %>%
+  filter(clonotype != 'None') %>%  # cells with alpha-beta pair
+  mutate(clonotype_size = as.numeric(clonotype_size)) %>%
+  mutate(clonal_expansion = case_when(
+    clonotype_size == 1 ~ 'No',
+    TRUE ~ 'Clonal'
+  ))
+
+# d_4_p
+d_4_p = metadata %>%
+  left_join(clones, by = 'barcode') %>%
+  filter(!is.na(clonotype)) %>%
+  mutate(seurat_clusters = as.factor(seurat_clusters)) %>%
+  mutate(Tissue = factor(Tissue, levels = c("PBMC", "LN", "Normal", "Adjacent", "Tumor"))) %>%
+  mutate(Origin = factor(Origin, levels = c("PBMC1", "PBMC2",
+                                            'LN-LR', 'LN-RR', 'LN-UTP1', 'LN-UTP2', 'LN-ITP',
+                                            'LN-LTP', 'LN-LP', 'LN-LP1', 'LN-LP2', 'LN-LG',
+                                            "Normal", "Adjacent",
+                                            "Tumor_core", "Tumor_invasion", "Tumor_middle"))) %>%
+  mutate(Origin2_n = factor(Origin2_n, levels = c("prePBMC", "postPBMC", "nLN", "pLN", "Normal", "Adjacent", "Tumor")),
+         Origin4 = factor(Origin4, levels = c("prePBMC", "postPBMC", "nLN", "m_nLN", "m_pLN", "Normal", "Adjacent", "Tumor")),
+         Origin3 = factor(Origin3, levels = c("PBMC1", "PBMC2", "LN_Up", "LN_Down", "Normal", "Adjacent", "Tumor")),
+         Metastatic = factor(Metastatic, levels = c("None", "N", "P")))
+
+head(d_4_p)
+```
+
+## Stats
+
+83941 clonotypes detected.
+
+```{r num-clonotypes}
+d_4_p %>%
+  pull(clonotype) %>%
+  unique() %>% length()
+```
+
+an average of 1.47 cells were assigned to each clonotype
+
+```{r }
+d_4_p %>%
+  group_by(clonotype) %>%
+  summarise(n = n()) %>%
+  summarise(m = mean(n))
+```
+
+7417 clonotypes consisted of more than one cell
+
+```{r }
+d_4_p %>%
+  group_by(clonotype) %>%
+  summarise(n = n()) %>%
+  filter(n > 1) %>%
+  dim()
+```
+
+clonotype sizes ranged from 1 cell to 2749 cells
+
+```{r }
+d_4_p %>%
+  group_by(clonotype) %>%
+  summarise(n = n()) %>%
+  pull(n) %>%
+  range()
+```
+
+We obtained full-length TCRs with both alpha and beta chains for 124,203 cells of the xxx clusters, including 73193 harboring unique TCRs and 51010 harboring repeated use of TCRs, indicative of clonal expansion.
+
+```{r num-full-len-tcr}
+dim(d_4_p)
+```
+
+```{r num-clonal-cell}
+table(d_4_p$clonal_expansion)
+```
+
+We detected an average of 13992 unique clonotypes on average in each patient
+
+```{r }
+d_4_p %>%
+  distinct(Patient, clonotype) %>%
+  group_by(Patient) %>%
+  summarise(n = n())
+```
+
+```{r }
+d_4_p %>%
+  distinct(Patient, clonotype) %>%
+  group_by(Patient) %>%
+  summarise(n = n()) %>%
+  summarise(m = mean(n))
+```
+
+26 patient-shared clones were found.
+
+```{r patient_shared, cache=FALSE}
+tmp = d_4_p %>%
+  group_by(clonotype, Patient) %>%
+  summarise(n = n()) %>%
+  mutate(n = n_distinct(clonotype, Patient)) %>%
+  dplyr::select(clonotype, n) %>%
+  mutate(patient_shared = ifelse(n > 1, 'Yes', 'No')) %>%
+  dplyr::select(clonotype, patient_shared)
+d_4_p = d_4_p %>%
+  left_join(tmp, by = 'clonotype')
+table(tmp$patient_shared)
+```
+
+9257 clonotypes were tissue-shared (!!!! Origin4).
+
+```{r tissue_shared, cache=FALSE}
+tmp = d_4_p %>%
+  group_by(clonotype, Origin4) %>%
+  summarise(n = n()) %>%
+  mutate(n = n_distinct(clonotype, Origin4)) %>%
+  dplyr::select(clonotype, n) %>%
+  mutate(tissue_shared = ifelse(n > 1, 'Yes', 'No')) %>%
+  dplyr::select(clonotype, tissue_shared)
+d_4_p = d_4_p %>%
+  left_join(tmp, by = 'clonotype')
+table(tmp$tissue_shared)
+```
+
+## Clonal expansion {.tabset}
+
+```{r t-umap-clone-size, fig.height=5, fig.width=12}
+plot_grid(
+  d_4_p %>%
+    filter(clonal_expansion == 'Clonal') %>%
+    ggplot(aes(UMAP_1, UMAP_2, color = log2(clonotype_size))) +
+    geom_point_rast(alpha = 0.7, size = .3) +
+    scale_color_gradient(low = "#d2d1e6",
+                         high = "#492b7e",
+                         name = '') +
+    labs(title = 'TCR clone size of clonal T cell (log2 scale)'),
+  d_4_p %>%
+    filter(clonal_expansion == 'Clonal') %>%
+    mutate(z = ifelse(clonotype_size >= 10, '>=10', '<10')) %>%
+    ggplot(aes(UMAP_1, UMAP_2, color = z)) +
+    geom_point_rast(alpha = 0.7, size = .3) +
+    labs(title = 'Clonal T cell (10+)') +
+    scale_color_manual(values = c('#d2d1e6', '#492b7e'),
+                       name = '') +
+    guides(color = guide_legend(override.aes = list(size = 5)))
+)
+```
+
+The association between the number of T cell clones and the number of cells per clonotype. The dashed line separates non-clonal and clonal cells, with the latter identified by repeated usage of TCRs. LOESS fitting is labeled as the solid line showing negative correlation between the two axes.
+
+```{r cells-clonotypes, fig.width=6, fig.height=6}
+Rscir::PlotClonalExpansion(d_4_p)
+```
+
+## Clonal cell fraction {.tabset}
+
+### level_3
+
+```{r fraction-clonal-level_3, fig.width=8, fig.height=6}
+# sort
+tmp_cd8 = d_4_p %>% filter(level_1 == "CD8") %>%
+  group_by(Patient, level_3, clonal_expansion) %>% summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(clonal_expansion == 'Clonal') %>%
+  group_by(level_3) %>%
+  summarise(p = mean(Percent)) %>%
+  arrange(-p)
+tmp_cd4 = d_4_p %>% filter(level_1 == "CD4") %>%
+  group_by(level_3, clonal_expansion) %>% summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(clonal_expansion == 'Clonal') %>%
+  group_by(level_3) %>%
+  summarise(p = mean(Percent)) %>%
+  arrange(-p)
+tmp_treg = d_4_p %>% filter(level_1 == "Treg") %>%
+  group_by(level_3, clonal_expansion) %>% summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(clonal_expansion == 'Clonal') %>%
+  group_by(level_3) %>%
+  summarise(p = mean(Percent)) %>%
+  arrange(-p)
+tmp_gdt = d_4_p %>% filter(level_1 == "γδT") %>%
+  group_by(level_3, clonal_expansion) %>% summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(clonal_expansion == 'Clonal') %>%
+  group_by(level_3) %>%
+  summarise(p = mean(Percent)) %>%
+  arrange(-p)
+tmp_nkt = d_4_p %>% filter(level_1 == "NK/NKT") %>%
+  group_by(level_3, clonal_expansion) %>% summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(clonal_expansion == 'Clonal') %>%
+  group_by(level_3) %>%
+  summarise(p = mean(Percent)) %>%
+  arrange(-p)
+tmp_un = d_4_p %>% filter(level_1 == "Unknown") %>%
+  group_by(level_3, clonal_expansion) %>% summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(clonal_expansion == 'Clonal') %>%
+  group_by(level_3) %>%
+  summarise(p = mean(Percent)) %>%
+  arrange(-p)
+tmp_df = rbind(tmp_cd8, tmp_cd4, tmp_treg, tmp_gdt, tmp_nkt, tmp_un)
+
+x = d_4_p %>%
+  group_by(Patient, level_3, clonal_expansion) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(clonal_expansion == 'Clonal') %>%
+  ungroup() %>%
+  mutate(level_3 = factor(level_3, levels = tmp_df$level_3))
+
+p1 = ggbarplot(x, x = 'level_3', y = 'Percent', 
+               add = c('mean_se'))
+p2 = ggplot(x, aes(x = level_3, y = Percent, color = Patient)) + 
+  geom_point() +
+  scale_color_manual(values = patient_color_maps)
+
+p3 = p2
+p3$layers = c(p1$layers, p2$layers)
+p3 +
+  #scale_y_continuous(expand = c(0, 0)) +
+  labs(y = 'Clonal cells in each cluster (%)') +
+  theme_cowplot() +
+  theme(axis.title.x = element_blank()) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1))
+```
+
+Comparison between fraction of clonal cells in each cluster (x axis) and percentage of cells with TCRs shared within tissues (y axis).
+
+```{r clonal-intra-tissue-level_3, fig.height=6, fig.width=8}
+a = d_4_p %>%
+  group_by(level_3, clonal_expansion) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(clonal_expansion == 'Clonal')
+b = d_4_p %>%
+  unite('z', tissue_shared, clonal_expansion, remove = FALSE) %>%
+  group_by(level_3, z) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(z == 'No_Clonal')
+
+a %>%
+  left_join(b, by = 'level_3') %>%
+  ggplot(aes(x = Percent.x, y = Percent.y, label = level_3)) +
+  geom_point(color = '#006485', size = 4) +
+  geom_text_repel() +
+  labs(x = 'Clonal cells in each cluster (%)',
+       y = 'Intra-tissue clonal cells in each cluster (%)',
+       title = 'Intra-tissue clonal cells') +
+  theme_cowplot()
+```
+
+CD8
+
+```{r clonal-intra-tissue-level_3-cd8, fig.height=4, fig.width=5}
+a %>%
+  filter(str_starts(level_3, "CD8")) %>%
+  left_join(b, by = 'level_3') %>%
+  ggplot(aes(x = Percent.x, y = Percent.y, label = level_3, color = level_3)) +
+  geom_point(size = 3) +
+  geom_text_repel() +
+  scale_color_manual(values = t_level_3_color) +
+  labs(x = 'Clonal cells in each cluster (%)',
+       y = 'Intra-tissue clonal cells in each cluster (%)',
+       title = 'Intra-tissue clonal cells') +
+  theme_cowplot() +
+  theme(legend.position = "none")
+```
+
+Comparison between fraction of clonal cells in each cluster (x axis) and percentage of cells with TCRs shared across tissues (y axis).
+
+```{r clonal-inter-tissue-level_3, fig.height=6, fig.width=8}
+a = d_4_p %>%
+  group_by(level_3, clonal_expansion) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(clonal_expansion == 'Clonal')
+b = d_4_p %>%
+  unite('z', tissue_shared, clonal_expansion, remove = FALSE) %>%
+  group_by(level_3, z) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(z == 'Yes_Clonal')
+
+a %>%
+  left_join(b, by = 'level_3') %>%
+  ggplot(aes(x = Percent.x, y = Percent.y, label = level_3)) +
+  geom_point(color = '#006485', size = 4) +
+  geom_text_repel() +
+  labs(x = 'Clonal cells in each cluster (%)',
+       y = 'Inter-tissue clonal cells in each cluster (%)',
+       title = 'Inter-tissue clonal cells') +
+  theme_cowplot()
+```
+
+CD8
+
+```{r clonal-inter-tissue-level_3-cd8, fig.height=4, fig.width=5}
+a %>%
+  filter(str_starts(level_3, "CD8")) %>%
+  left_join(b, by = 'level_3') %>%
+  ggplot(aes(x = Percent.x, y = Percent.y, label = level_3, color = level_3)) +
+  geom_point(size = 3) +
+  geom_text_repel() +
+  scale_color_manual(values = t_level_3_color) +
+  labs(x = 'Clonal cells in each cluster (%)',
+       y = 'Intra-tissue clonal cells in each cluster (%)',
+       title = 'Intra-tissue clonal cells') +
+  theme_cowplot() +
+  theme(legend.position = "none")
+```
+
+### Cluster
+
+Bar plot showing average fractions of clonal T cells among all patients in each cluster. T cells among all 3 patients in each cluster, with error bars representing ± s.e.m. of all patients. Dot colors represent different patients. 
+
+```{r fraction-clonal-Cluster, fig.width=8, fig.height=6}
+x = d_4_p %>%
+  group_by(Patient, seurat_clusters, clonal_expansion) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(clonal_expansion == 'Clonal') %>%
+  ungroup() %>%
+  mutate(seurat_clusters = as.factor(seurat_clusters))
+
+p1 = ggbarplot(x, x = 'seurat_clusters', y = 'Percent', 
+               add = c('mean_se'))
+p2 = ggplot(x, aes(x = seurat_clusters, y = Percent, color = Patient)) + 
+  geom_point() +
+  scale_color_manual(values = patient_color_maps)
+
+p3 = p2
+p3$layers = c(p1$layers, p2$layers)
+p3 +
+  #scale_y_continuous(expand = c(0, 0)) +
+  labs(y = 'Clonal cells in each cluster (%)') +
+  theme_cowplot() +
+  theme(axis.title.x = element_blank()) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1))
+```
+
+Comparison between fraction of clonal cells in each cluster (x axis) and percentage of cells with TCRs shared within tissues (y axis).
+
+```{r clonal-intra-tissue, fig.height=6, fig.width=8}
+a = d_4_p %>%
+  group_by(seurat_clusters, clonal_expansion) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(clonal_expansion == 'Clonal')
+b = d_4_p %>%
+  unite('z', tissue_shared, clonal_expansion, remove = FALSE) %>%
+  group_by(seurat_clusters, z) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(z == 'No_Clonal')
+
+a %>%
+  left_join(b, by = 'seurat_clusters') %>%
+  ggplot(aes(x = Percent.x, y = Percent.y, label = seurat_clusters)) +
+  geom_point(color = '#006485', size = 4) +
+  geom_text_repel() +
+  labs(x = 'Clonal cells in each cluster (%)',
+       y = 'Intra-tissue clonal cells in each cluster (%)',
+       title = 'Intra-tissue clonal cells') +
+  theme_cowplot()
+```
+
+Comparison between fraction of clonal cells in each cluster (x axis) and percentage of cells with TCRs shared across tissues (y axis).
+
+```{r clonal-inter-tissue, fig.height=6, fig.width=8}
+a = d_4_p %>%
+  group_by(seurat_clusters, clonal_expansion) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(clonal_expansion == 'Clonal')
+b = d_4_p %>%
+  unite('z', tissue_shared, clonal_expansion, remove = FALSE) %>%
+  group_by(seurat_clusters, z) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(z == 'Yes_Clonal')
+
+a %>%
+  left_join(b, by = 'seurat_clusters') %>%
+  ggplot(aes(x = Percent.x, y = Percent.y, label = seurat_clusters)) +
+  geom_point(color = '#006485', size = 4) +
+  geom_text_repel() +
+  labs(x = 'Clonal cells in each cluster (%)',
+       y = 'Inter-tissue clonal cells in each cluster (%)',
+       title = 'Inter-tissue clonal cells') +
+  theme_cowplot()
+```
+
+### CD4 level_2
+
+```{r fraction-clonal-level_2-cd4, fig.width=4, fig.height=4}
+x = d_4_p %>%
+  filter(level_1 == "CD4") %>%
+  group_by(Patient, level_2, clonal_expansion) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(clonal_expansion == 'Clonal') %>%
+  ungroup() %>%
+  mutate(level_2 = as.factor(level_2))
+
+p1 = ggbarplot(x, x = 'level_2', y = 'Percent', 
+               add = c('mean_se'))
+p2 = ggplot(x, aes(x = level_2, y = Percent, color = Patient)) + 
+  geom_point() +
+  scale_color_manual(values = patient_color_maps)
+
+p3 = p2
+p3$layers = c(p1$layers, p2$layers)
+p3 +
+  #scale_y_continuous(expand = c(0, 0)) +
+  labs(y = 'Clonal cells in each cluster (%)') +
+  theme_cowplot() +
+  theme(axis.title.x = element_blank()) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1))
+```
+
+Comparison between fraction of clonal cells in each group (x axis) and percentage of cells with TCRs shared within tissues (y axis).
+
+```{r clonal-intra-tissue-level_2-cd4, fig.height=4, fig.width=5}
+a = d_4_p %>%
+  filter(level_1 == "CD4") %>%
+  group_by(level_2, clonal_expansion) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(clonal_expansion == 'Clonal')
+b = d_4_p %>%
+  filter(level_1 == "CD4") %>%
+  unite('z', tissue_shared, clonal_expansion, remove = FALSE) %>%
+  group_by(level_2, z) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(z == 'No_Clonal')
+
+a %>%
+  left_join(b, by = 'level_2') %>%
+  ggplot(aes(x = Percent.x, y = Percent.y, label = level_2)) +
+  geom_point(color = '#006485', size = 4) +
+  geom_text_repel() +
+  labs(x = 'Clonal cells in each group (%)',
+       y = 'Intra-tissue clonal cells in each group (%)',
+       title = 'Intra-tissue clonal cells') +
+  theme_cowplot()
+```
+
+Comparison between fraction of clonal cells in each group (x axis) and percentage of cells with TCRs shared across tissues (y axis).
+
+```{r clonal-inter-tissue-level_2-cd4, fig.height=4, fig.width=5}
+a = d_4_p %>%
+  filter(level_1 == "CD4") %>%
+  group_by(level_2, clonal_expansion) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(clonal_expansion == 'Clonal')
+b = d_4_p %>%
+  filter(level_1 == "CD4") %>%
+  unite('z', tissue_shared, clonal_expansion, remove = FALSE) %>%
+  group_by(level_2, z) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(z == 'Yes_Clonal')
+
+a %>%
+  left_join(b, by = 'level_2') %>%
+  ggplot(aes(x = Percent.x, y = Percent.y, label = level_2)) +
+  geom_point(color = '#006485', size = 4) +
+  geom_text_repel() +
+  labs(x = 'Clonal cells in each group (%)',
+       y = 'Inter-tissue clonal cells in each group (%)',
+       title = 'Inter-tissue clonal cells') +
+  theme_cowplot()
+```
+
+### CD8 level_2
+
+```{r fraction-clonal-level_2-cd8, fig.width=4, fig.height=4}
+x = d_4_p %>%
+  filter(level_1 == "CD8") %>%
+  group_by(Patient, level_2, clonal_expansion) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(clonal_expansion == 'Clonal') %>%
+  ungroup() %>%
+  mutate(level_2 = as.factor(level_2))
+
+p1 = ggbarplot(x, x = 'level_2', y = 'Percent', 
+               add = c('mean_se'))
+p2 = ggplot(x, aes(x = level_2, y = Percent, color = Patient)) + 
+  geom_point() +
+  scale_color_manual(values = patient_color_maps)
+
+p3 = p2
+p3$layers = c(p1$layers, p2$layers)
+p3 +
+  #scale_y_continuous(expand = c(0, 0)) +
+  labs(y = 'Clonal cells in each group (%)') +
+  theme_cowplot() +
+  theme(axis.title.x = element_blank()) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1))
+```
+
+Comparison between fraction of clonal cells in each group (x axis) and percentage of cells with TCRs shared within tissues (y axis).
+
+```{r clonal-intra-tissue-level_2-cd8, fig.height=4, fig.width=5}
+a = d_4_p %>%
+  filter(level_1 == "CD8") %>%
+  group_by(level_2, clonal_expansion) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(clonal_expansion == 'Clonal')
+b = d_4_p %>%
+  filter(level_1 == "CD8") %>%
+  unite('z', tissue_shared, clonal_expansion, remove = FALSE) %>%
+  group_by(level_2, z) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(z == 'No_Clonal')
+
+a %>%
+  left_join(b, by = 'level_2') %>%
+  ggplot(aes(x = Percent.x, y = Percent.y, label = level_2)) +
+  geom_point(color = '#006485', size = 4) +
+  geom_text_repel() +
+  labs(x = 'Clonal cells in each group (%)',
+       y = 'Intra-tissue clonal cells in each group (%)',
+       title = 'Intra-tissue clonal cells') +
+  theme_cowplot()
+```
+
+Comparison between fraction of clonal cells in each group (x axis) and percentage of cells with TCRs shared across tissues (y axis).
+
+```{r clonal-inter-tissue-level_2-cd8, fig.height=4, fig.width=5}
+a = d_4_p %>%
+  filter(level_1 == "CD8") %>%
+  group_by(level_2, clonal_expansion) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(clonal_expansion == 'Clonal')
+b = d_4_p %>%
+  filter(level_1 == "CD8") %>%
+  unite('z', tissue_shared, clonal_expansion, remove = FALSE) %>%
+  group_by(level_2, z) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(z == 'Yes_Clonal')
+
+a %>%
+  left_join(b, by = 'level_2') %>%
+  ggplot(aes(x = Percent.x, y = Percent.y, label = level_2)) +
+  geom_point(color = '#006485', size = 4) +
+  geom_text_repel() +
+  labs(x = 'Clonal cells in each group (%)',
+       y = 'Inter-tissue clonal cells in each group (%)',
+       title = 'Inter-tissue clonal cells') +
+  theme_cowplot()
+```
+
+### Origin4
+
+```{r fraction-clonal-Origin4, fig.width=4, fig.height=4}
+d_4_p %>%
+  group_by(Origin4, clonal_expansion) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(clonal_expansion == 'Clonal') %>%
+  ggplot(aes(x=Origin4, y=Percent, fill=Origin4)) +
+  geom_col() +
+  labs(y = 'Clonal cells in each tissue (%)', x=NULL) +
+  scale_fill_manual(values = origin4_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1),
+        legend.position = 'none')
+```
+
+### Patient x Origin4
+
+```{r fraction-clonal-Origin4-2, fig.width=8, fig.height=5}
+d_4_p %>%
+  group_by(Patient, Origin4, clonal_expansion) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(clonal_expansion == 'Clonal') %>%
+  ggplot(aes(x=Patient, y=Percent, fill=Origin4)) +
+  geom_col(position = position_dodge()) +
+  labs(y = 'Clonal cells in each tissue (%)', x=NULL) +
+  scale_fill_manual(values = origin4_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1))
+```
+
+### Origin2_n
+
+```{r fraction-clonal-Origin2_n, fig.width=4, fig.height=4}
+d_4_p %>%
+  group_by(Origin2_n, clonal_expansion) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(clonal_expansion == 'Clonal') %>%
+  ggplot(aes(x=Origin2_n, y=Percent, fill=Origin2_n)) +
+  geom_col() +
+  labs(y = 'Clonal cells in each tissue (%)', x=NULL) +
+  scale_fill_manual(values = origin2_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1),
+        legend.position = 'none')
+```
+
+### Patient x Origin2_n
+
+```{r fraction-clonal-Origin2_n-2, fig.width=8, fig.height=5}
+d_4_p %>%
+  group_by(Patient, Origin2_n, clonal_expansion) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(clonal_expansion == 'Clonal') %>%
+  ggplot(aes(x=Patient, y=Percent, fill=Origin2_n)) +
+  geom_col(position = position_dodge()) +
+  labs(y = 'Clonal cells in each tissue (%)', x=NULL) +
+  scale_fill_manual(values = origin2_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1))
+```
+
+### Tissue
+
+```{r fraction-clonal-tissue, fig.width=4, fig.height=4}
+d_4_p %>%
+  group_by(Tissue, clonal_expansion) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(clonal_expansion == 'Clonal') %>%
+  ggplot(aes(x=Tissue, y=Percent, fill=Tissue)) +
+  geom_col() +
+  labs(y = 'Clonal cells in each tissue (%)', x=NULL) +
+  scale_fill_manual(values = tissue_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1),
+        legend.position = 'none')
+```
+
+### Patient x Tissue
+
+```{r fraction-clonal-tissue-2, fig.width=8, fig.height=6}
+d_4_p %>%
+  group_by(Patient, Tissue, clonal_expansion) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(clonal_expansion == 'Clonal') %>%
+  ggplot(aes(x=Patient, y=Percent, fill=Tissue)) +
+  geom_col(position = position_dodge()) +
+  labs(y = 'Clonal cells in each tissue (%)', x=NULL) +
+  scale_fill_manual(values = tissue_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1))
+```
+
+### Origin3
+
+```{r fraction-clonal-Origin3, fig.width=4, fig.height=4}
+d_4_p %>%
+  group_by(Origin3, clonal_expansion) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(clonal_expansion == 'Clonal') %>%
+  ggplot(aes(x=Origin3, y=Percent, fill=Origin3)) +
+  geom_col() +
+  labs(y = 'Clonal cells in each tissue (%)', x=NULL) +
+  scale_fill_manual(values = origin3_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1),
+        legend.position = 'none')
+```
+
+### Patient x Origin3
+
+```{r fraction-clonal-Origin3-2, fig.width=8, fig.height=5}
+d_4_p %>%
+  group_by(Patient, Origin3, clonal_expansion) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(clonal_expansion == 'Clonal') %>%
+  ggplot(aes(x=Patient, y=Percent, fill=Origin3)) +
+  geom_col(position = position_dodge()) +
+  labs(y = 'Clonal cells in each tissue (%)', x=NULL) +
+  scale_fill_manual(values = origin3_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1))
+```
+
+### Origin
+
+```{r fraction-clonal-Origin, fig.width=5, fig.height=4}
+d_4_p %>%
+  group_by(Origin, clonal_expansion) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(clonal_expansion == 'Clonal') %>%
+  ggplot(aes(x=Origin, y=Percent, fill=Origin)) +
+  geom_col() +
+  labs(y = '% of clonal cells', x=NULL) +
+  scale_fill_manual(values = origin_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1),
+        legend.position = 'none')
+```
+
+### Patient x Origin
+
+```{r fraction-clonal-Origin-2, fig.width=12, fig.height=6}
+d_4_p %>%
+  group_by(Patient, Origin, clonal_expansion) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(clonal_expansion == 'Clonal') %>%
+  ggplot(aes(x=Patient, y=Percent, fill=Origin)) +
+  geom_col(position = position_dodge()) +
+  labs(y = '% of clonal cells', x=NULL) +
+  scale_fill_manual(values = origin_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1))
+```
+
+## Diversity {.tabset}
+
+Meatures using Gini index
+
+### level_3
+
+```{r Gini-level_3}
+df = Rscir::AlphaDiversity(d_4_p, c('level_3', 'Patient'), method = 'gini')
+DT::datatable(df,
+              filter = 'top')
+```
+
+```{r Gini-level_3-plot, fig.width=8, fig.height=4}
+# sort
+tmp_cd8 = Rscir::AlphaDiversity(d_4_p %>% filter(level_1 == "CD8"),
+                                c('level_3', 'Patient'), method = 'gini') %>%
+  group_by(level_3) %>%
+  summarise(m = median(div)) %>%
+  arrange(-m)
+tmp_cd4 = Rscir::AlphaDiversity(d_4_p %>% filter(level_1 == "CD4"),
+                                c('level_3', 'Patient'), method = 'gini') %>%
+  group_by(level_3) %>%
+  summarise(m = median(div)) %>%
+  arrange(-m)
+tmp_treg = Rscir::AlphaDiversity(d_4_p %>% filter(level_1 == "Treg"),
+                                c('level_3', 'Patient'), method = 'gini') %>%
+  group_by(level_3) %>%
+  summarise(m = median(div)) %>%
+  arrange(-m)
+tmp_gdt = Rscir::AlphaDiversity(d_4_p %>% filter(level_1 == "γδT"),
+                                c('level_3', 'Patient'), method = 'gini') %>%
+  group_by(level_3) %>%
+  summarise(m = median(div)) %>%
+  arrange(-m)
+tmp_nkt = Rscir::AlphaDiversity(d_4_p %>% filter(level_1 == "NK/NKT"),
+                                c('level_3', 'Patient'), method = 'gini') %>%
+  group_by(level_3) %>%
+  summarise(m = median(div)) %>%
+  arrange(-m)
+tmp_un = Rscir::AlphaDiversity(d_4_p %>% filter(level_1 == "Unknown"),
+                                c('level_3', 'Patient'), method = 'gini') %>%
+  group_by(level_3) %>%
+  summarise(m = median(div)) %>%
+  arrange(-m)
+tmp_df = rbind(tmp_cd8, tmp_cd4, tmp_treg, tmp_gdt, tmp_nkt, tmp_un)
+
+df %>%
+  mutate(level_3 = factor(level_3, levels = tmp_df$level_3)) %>%
+  ggplot(aes(x = level_3, y = div)) +
+  geom_boxplot(aes(fill = level_3)) +
+  geom_point(aes(color = Patient)) +
+  scale_fill_manual(values = cluster_color_maps) +
+  scale_color_manual(values = patient_color_maps) +
+  guides(fill=FALSE) +
+  labs(x=NULL, y='Gini index') +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1))
+```
+
+### Cluster
+
+```{r Gini-Cluster}
+df = Rscir::AlphaDiversity(d_4_p, c('seurat_clusters', 'Patient'), method = 'gini')
+DT::datatable(df,
+              filter = 'top')
+```
+
+```{r Gini-Cluster-plot, fig.width=8, fig.height=4}
+df %>%
+  ggplot(aes(x = seurat_clusters, y = div)) +
+  geom_boxplot(aes(fill = seurat_clusters)) +
+  geom_point(aes(color = Patient)) +
+  scale_fill_manual(values = cluster_color_maps) +
+  scale_color_manual(values = patient_color_maps) +
+  guides(fill=FALSE) +
+  labs(x=NULL, y='Gini index') +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1))
+```
+
+### CD4 level_2
+
+```{r Gini-level_2-CD4}
+df = Rscir::AlphaDiversity(d_4_p %>% filter(level_1 == "CD4"), c('level_2', 'Patient'), method = 'gini')
+DT::datatable(df,
+              filter = 'top')
+```
+
+```{r Gini-level_2-plot-CD4, fig.width=4, fig.height=4}
+df %>%
+  ggplot(aes(x = reorder(level_2, -div, median), y = div)) +
+  geom_boxplot(aes(fill = level_2)) +
+  geom_point(aes(color = Patient)) +
+  scale_fill_manual(values = cluster_color_maps) +
+  scale_color_manual(values = patient_color_maps) +
+  guides(fill=FALSE) +
+  labs(x=NULL, y='Gini index') +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1))
+```
+
+### CD8 level_2
+
+```{r Gini-level_2-CD8}
+df = Rscir::AlphaDiversity(d_4_p %>% filter(level_1 == "CD8"), c('level_2', 'Patient'), method = 'gini')
+DT::datatable(df,
+              filter = 'top')
+```
+
+```{r Gini-level_2-plot-CD8, fig.width=4, fig.height=4}
+df %>%
+  ggplot(aes(x = reorder(level_2, -div, median), y = div)) +
+  geom_boxplot(aes(fill = level_2)) +
+  geom_point(aes(color = Patient)) +
+  scale_fill_manual(values = cluster_color_maps) +
+  scale_color_manual(values = patient_color_maps) +
+  guides(fill=FALSE) +
+  labs(x=NULL, y='Gini index') +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1))
+```
+
+### Origin4
+
+```{r Gini-Origin4}
+df = Rscir::AlphaDiversity(d_4_p, c('Origin4', 'Patient'), method = 'gini')
+DT::datatable(df,
+              filter = 'top')
+```
+
+```{r Gini-Origin4-plot, fig.width=5, fig.height=4}
+df %>%
+  ggplot(aes(x=Origin4, y=div)) +
+  geom_boxplot(aes(fill=Origin4)) +
+  geom_point(aes(color = Patient)) +
+  scale_fill_manual(values = origin4_color_maps) +
+  scale_color_manual(values = patient_color_maps) +
+  guides(fill=FALSE) +
+  labs(x=NULL, y='Gini index') +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1))
+```
+
+### Origin4 x CD4 {.tabset}
+
+```{r , results = "hide"}
+seurat_clusters = d_4_p %>% filter(level_1=="CD4") %>% pull(level_2) %>% unique()
+src_list <- lapply(seurat_clusters, function(cluster){
+    src <- c(
+        "#### {{cluster}} {.unnumbered}",
+        "```{r fig.width=4, fig.height=4}",
+        "df = Rscir::AlphaDiversity(d_4_p %>% filter(level_1=='CD4', level_2 == '{{cluster}}'), c('Origin4', 'Patient'), method = 'gini')",
+        "DT::datatable(df, filter = 'top')",
+        "df %>% ggplot(aes(x=Origin4, y=div)) + geom_boxplot(aes(fill=Origin4)) + geom_point(aes(color = Patient)) + scale_fill_manual(values = origin4_color_maps) + scale_color_manual(values = patient_color_maps) + guides(fill=FALSE) + labs(x=NULL, y='Gini index') + theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1))",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+### Origin4 x CD8 {.tabset}
+
+```{r , results = "hide"}
+seurat_clusters = d_4_p %>% filter(level_1=="CD8") %>% pull(level_2) %>% unique()
+src_list <- lapply(seurat_clusters, function(cluster){
+    src <- c(
+        "#### {{cluster}} {.unnumbered}",
+        "```{r fig.width=4, fig.height=4}",
+        "df = Rscir::AlphaDiversity(d_4_p %>% filter(level_1=='CD8', level_2 == '{{cluster}}'), c('Origin4', 'Patient'), method = 'gini')",
+        "DT::datatable(df, filter = 'top')",
+        "df %>% ggplot(aes(x=Origin4, y=div)) + geom_boxplot(aes(fill=Origin4)) + geom_point(aes(color = Patient)) + scale_fill_manual(values = origin4_color_maps) + scale_color_manual(values = patient_color_maps) + guides(fill=FALSE) + labs(x=NULL, y='Gini index') + theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1))",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+### Origin2_n
+
+```{r Gini-Origin2_n}
+df = Rscir::AlphaDiversity(d_4_p, c('Origin2_n', 'Patient'), method = 'gini')
+DT::datatable(df,
+              filter = 'top')
+```
+
+```{r Gini-Origin2_n-plot, fig.width=5, fig.height=4}
+df %>%
+  ggplot(aes(x=Origin2_n, y=div)) +
+  geom_boxplot(aes(fill=Origin2_n)) +
+  geom_point(aes(color = Patient)) +
+  scale_fill_manual(values = origin2_color_maps) +
+  scale_color_manual(values = patient_color_maps) +
+  guides(fill=FALSE) +
+  labs(x=NULL, y='Gini index') +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1))
+```
+
+### Origin2_n x CD4 {.tabset}
+
+```{r , results = "hide"}
+seurat_clusters = d_4_p %>% filter(level_1=="CD4") %>% pull(level_2) %>% unique()
+src_list <- lapply(seurat_clusters, function(cluster){
+    src <- c(
+        "#### {{cluster}} {.unnumbered}",
+        "```{r fig.width=4, fig.height=4}",
+        "df = Rscir::AlphaDiversity(d_4_p %>% filter(level_1=='CD4', level_2 == '{{cluster}}'), c('Origin2_n', 'Patient'), method = 'gini')",
+        "DT::datatable(df, filter = 'top')",
+        "df %>% ggplot(aes(x=Origin2_n, y=div)) + geom_boxplot(aes(fill=Origin2_n)) + geom_point(aes(color = Patient)) + scale_fill_manual(values = origin2_color_maps) + scale_color_manual(values = patient_color_maps) + guides(fill=FALSE) + labs(x=NULL, y='Gini index') + theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1))",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+### Origin2_n x CD8 {.tabset}
+
+```{r , results = "hide"}
+seurat_clusters = d_4_p %>% filter(level_1=="CD8") %>% pull(level_2) %>% unique()
+src_list <- lapply(seurat_clusters, function(cluster){
+    src <- c(
+        "#### {{cluster}} {.unnumbered}",
+        "```{r fig.width=4, fig.height=4}",
+        "df = Rscir::AlphaDiversity(d_4_p %>% filter(level_1=='CD8', level_2 == '{{cluster}}'), c('Origin2_n', 'Patient'), method = 'gini')",
+        "DT::datatable(df, filter = 'top')",
+        "df %>% ggplot(aes(x=Origin2_n, y=div)) + geom_boxplot(aes(fill=Origin2_n)) + geom_point(aes(color = Patient)) + scale_fill_manual(values = origin2_color_maps) + scale_color_manual(values = patient_color_maps) + guides(fill=FALSE) + labs(x=NULL, y='Gini index') + theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1))",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+### Tissue
+
+```{r Gini-Tissue}
+df = Rscir::AlphaDiversity(d_4_p, c('Tissue', 'Patient'), method = 'gini')
+DT::datatable(df,
+              filter = 'top')
+```
+
+```{r Gini-Tissue-plot, fig.width=5, fig.height=4}
+df %>%
+  ggplot(aes(x=Tissue, y=div)) +
+  geom_boxplot(aes(fill=Tissue)) +
+  geom_point(aes(color = Patient)) +
+  scale_fill_manual(values = tissue_color_maps) +
+  scale_color_manual(values = patient_color_maps) +
+  guides(fill=FALSE) +
+  labs(x=NULL, y='Gini index') +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1))
+```
+
+### Tissue x CD4 {.tabset}
+
+```{r , results = "hide"}
+seurat_clusters = d_4_p %>% filter(level_1=="CD4") %>% pull(level_2) %>% unique()
+src_list <- lapply(seurat_clusters, function(cluster){
+    src <- c(
+        "#### {{cluster}} {.unnumbered}",
+        "```{r fig.width=4, fig.height=4}",
+        "df = Rscir::AlphaDiversity(d_4_p %>% filter(level_1=='CD4', level_2 == '{{cluster}}'), c('Tissue', 'Patient'), method = 'gini')",
+        "DT::datatable(df, filter = 'top')",
+        "df %>% ggplot(aes(x=Tissue, y=div)) + geom_boxplot(aes(fill=Tissue)) + geom_point(aes(color = Patient)) + scale_fill_manual(values = tissue_color_maps) + scale_color_manual(values = patient_color_maps) + guides(fill=FALSE) + labs(x=NULL, y='Gini index') + theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1))",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+### Tissue x CD8 {.tabset}
+
+```{r , results = "hide"}
+seurat_clusters = d_4_p %>% filter(level_1=="CD8") %>% pull(level_2) %>% unique()
+src_list <- lapply(seurat_clusters, function(cluster){
+    src <- c(
+        "#### {{cluster}} {.unnumbered}",
+        "```{r fig.width=4, fig.height=4}",
+        "df = Rscir::AlphaDiversity(d_4_p %>% filter(level_1=='CD8', level_2 == '{{cluster}}'), c('Tissue', 'Patient'), method = 'gini')",
+        "DT::datatable(df, filter = 'top')",
+        "df %>% ggplot(aes(x=Tissue, y=div)) + geom_boxplot(aes(fill=Tissue)) + geom_point(aes(color = Patient)) + scale_fill_manual(values = tissue_color_maps) + scale_color_manual(values = patient_color_maps) + guides(fill=FALSE) + labs(x=NULL, y='Gini index') + theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1))",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+### Patient P-N
+
+```{r Gini-Metastatic P-N}
+df = Rscir::AlphaDiversity(d_4_p, c('Metastatic', 'Patient'), method = 'gini')
+DT::datatable(df,
+              filter = 'top')
+```
+
+```{r Gini-Metastatic-plot, fig.width=4, fig.height=4}
+df %>%
+  ggplot(aes(x=Metastatic, y=div)) +
+  geom_boxplot(aes(fill=Metastatic)) +
+  geom_point(aes(color = Patient)) +
+  scale_fill_manual(values = colors_3) +
+  scale_color_manual(values = patient_color_maps) +
+  guides(fill=FALSE) +
+  labs(x=NULL, y='Gini index') +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1))
+```
+
+### Patient P-N x CD4 {.tabset}
+
+```{r , results = "hide"}
+seurat_clusters = d_4_p %>% filter(level_1=="CD4") %>% pull(level_2) %>% unique()
+src_list <- lapply(seurat_clusters, function(cluster){
+    src <- c(
+        "#### {{cluster}} {.unnumbered}",
+        "```{r fig.width=4, fig.height=4}",
+        "df = Rscir::AlphaDiversity(d_4_p %>% filter(level_1=='CD4', level_2 == '{{cluster}}'), c('Metastatic', 'Patient'), method = 'gini')",
+        "DT::datatable(df, filter = 'top')",
+        "df %>% ggplot(aes(x=Metastatic, y=div)) + geom_boxplot(aes(fill=Metastatic)) + geom_point(aes(color = Patient)) + scale_fill_manual(values = colors_3) + scale_color_manual(values = patient_color_maps) + guides(fill=FALSE) + labs(x=NULL, y='Gini index') + theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1))",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+### Patient P-N x CD8 {.tabset}
+
+```{r , results = "hide"}
+seurat_clusters = d_4_p %>% filter(level_1=="CD8") %>% pull(level_2) %>% unique()
+src_list <- lapply(seurat_clusters, function(cluster){
+    src <- c(
+        "#### {{cluster}} {.unnumbered}",
+        "```{r fig.width=4, fig.height=4}",
+        "df = Rscir::AlphaDiversity(d_4_p %>% filter(level_1=='CD8', level_2 == '{{cluster}}'), c('Metastatic', 'Patient'), method = 'gini')",
+        "DT::datatable(df, filter = 'top')",
+        "df %>% ggplot(aes(x=Metastatic, y=div)) + geom_boxplot(aes(fill=Metastatic)) + geom_point(aes(color = Patient)) + scale_fill_manual(values = colors_3) + scale_color_manual(values = patient_color_maps) + guides(fill=FALSE) + labs(x=NULL, y='Gini index') + theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1))",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+### Origin3
+
+```{r Gini-Origin3}
+df = Rscir::AlphaDiversity(d_4_p, c('Origin3', 'Patient'), method = 'gini')
+DT::datatable(df,
+              filter = 'top')
+```
+
+```{r Gini-Origin3-plot, fig.width=5, fig.height=4}
+df %>%
+  ggplot(aes(x=Origin3, y=div)) +
+  geom_boxplot(aes(fill=Origin3)) +
+  geom_point(aes(color = Patient)) +
+  scale_fill_manual(values = origin3_color_maps) +
+  scale_color_manual(values = patient_color_maps) +
+  guides(fill=FALSE) +
+  labs(x=NULL, y='Gini index') +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1))
+```
+
+### Origin
+
+```{r Gini-Origin}
+df = Rscir::AlphaDiversity(d_4_p, c('Origin', 'Patient'), method = 'gini')
+DT::datatable(df,
+              filter = 'top')
+```
+
+```{r Gini-Origin-plot, fig.width=8, fig.height=4}
+df %>%
+  ggplot(aes(x=Origin, y=div)) +
+  geom_boxplot(aes(fill=Origin)) +
+  geom_point(aes(color = Patient)) +
+  scale_fill_manual(values = origin_color_maps) +
+  scale_color_manual(values = patient_color_maps) +
+  guides(fill=FALSE) +
+  labs(x=NULL, y='Gini index') +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1))
+```
+
+## Plot
+
+% clonal vs. mean diversity
+
+```{r fig.width=6, fig.height=5}
+dat.div = Rscir::AlphaDiversity(d_4_p, c('level_3', 'Patient'), method = 'gini') %>%
+  group_by(level_3) %>%
+  summarise(m_div = mean(div))
+dat.clonal =  d_4_p %>%
+  group_by(Patient, level_3, clonal_expansion) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(clonal_expansion == 'Clonal') %>%
+  group_by(level_3) %>%
+  summarise(m_per = mean(Percent))
+dat.div %>%
+  left_join(dat.clonal, by = "level_3") %>%
+  ggplot(aes(y = m_div, x = m_per, color = level_3)) +
+  geom_point() +
+  geom_text_repel(aes(label = level_3), max.overlaps = 100) +
+  scale_color_manual(values = t_level_3_color) +
+  labs(y = "Gini index", x = "% of Clonal cells") +
+  theme(legend.position = "none")
+```
+
+
+## Session info
+

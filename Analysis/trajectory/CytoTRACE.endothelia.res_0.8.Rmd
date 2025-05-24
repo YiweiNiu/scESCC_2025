@@ -1,0 +1,176 @@
+---
+title: "CytoTRACE.endothelia.res_0.8"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r knitr, include = FALSE}
+DOCNAME = "CytoTRACE.endothelia.res_0.8"
+#dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+    if (before) {
+        print(paste("Start:", Sys.time()))
+        NOW <<- Sys.time()
+    } else {
+        print(paste("Stop:", Sys.time()))
+        print(Sys.time() - NOW)
+    }
+})
+
+knitr::opts_chunk$set(
+    autodep        = TRUE,
+    cache          = TRUE,
+    cache.path     = paste0("cache/", DOCNAME, "/"),
+    cache.lazy     = FALSE, 
+    cache.comments = FALSE,
+    echo           = TRUE,
+    error          = FALSE,
+    fig.align      = "center",
+    fig.width      = 10,
+    fig.height     = 8,
+    message        = FALSE,
+    warning        = FALSE,
+    timeit         = TRUE
+)
+```
+
+Using [CytoTRACE](https://cytotrace.stanford.edu) to predict the differentiation state of cells. Higher CytoTRACE value implies higher developmental potential.
+
+Paper of CytoTRACE: Gulati, G.S., Sikandar, S.S., Wesche, D.J., Manjunath, A., Bharadwaj, A., Berger, M.J., Ilagan, F., Kuo, A.H., Hsieh, R.W., Cai, S., et al. (2020). Single-cell transcriptional diversity is a hallmark of developmental potential. Science 367, 405–411.
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(ggplotify)
+library(ggcorrplot)
+library(cowplot)
+library(patchwork)
+library(ggpubr)
+theme_set(theme_cowplot())
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+
+# color
+library(ggsci)
+
+# Seurat
+library(Seurat)
+
+# CytoTRACE
+library(CytoTRACE)
+```
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+Load rds
+
+```{r load-rds, cache=FALSE}
+seurat = readRDS(here::here('output/04.rm_cells/seurat_endothelia.res_0.8.rds'))
+Idents(seurat) <- 'seurat_clusters'
+seurat
+```
+
+## CytoTRACE
+
+run CytoTRACE
+
+```{r CytoTRACE}
+mat = GetAssayData(seurat, assay = 'RNA', slot = 'counts')
+mat = Matrix::as.matrix(mat)
+result = CytoTRACE(mat, enableFast = F, ncores = 10)
+```
+
+Visualizing CytoTRACE results
+
+```{r vis-CytoTRACE-no-run, eval=FALSE, include=FALSE}
+# output pdf directly, not run
+emb = FetchData(seurat, vars = c('UMAP_1', 'UMAP_2'))
+phe = FetchData(seurat, vars = c('seurat_clusters'))
+phe = stats::setNames(as.character(phe[,1]), rownames(phe))
+phe = paste('C_', phe, sep = '')
+
+plotCytoTRACE(result, emb = emb, phenotype = phe)
+plotCytoGenes(results, numOfGenes = 10)
+```
+
+```{r vis-CytoTRACE, fig.height=3, fig.width=4}
+meta = FetchData(seurat, vars = c('UMAP_1', 'UMAP_2', 'seurat_clusters')) %>%
+  rownames_to_column('barcode')
+
+tibble(barcode = names(result$CytoTRACE),
+       value = result$CytoTRACE) %>%
+  left_join(meta, by = 'barcode') %>%
+  ggplot(aes(x=UMAP_1, y=UMAP_2, color=value)) +
+  geom_point() +
+  scale_color_viridis_c() +
+  labs(color = 'Predicted\norder')
+```
+
+```{r vis-box-CytoTRACE, fig.height=3, fig.width=4}
+meta = FetchData(seurat, vars = c('UMAP_1', 'UMAP_2', 'seurat_clusters')) %>%
+  rownames_to_column('barcode')
+
+tibble(barcode = names(result$CytoTRACE),
+       value = result$CytoTRACE) %>%
+  left_join(meta, by = 'barcode') %>%
+  ggplot(aes(x=seurat_clusters, y=value, fill=seurat_clusters)) +
+  geom_boxplot() +
+  scale_fill_manual(values = cluster_color_maps) +
+  labs(y= 'Predicted order') +
+  theme(legend.position = 'none')
+```
+
+## Blood endothelia
+
+run CytoTRACE
+
+```{r CytoTRACE-blood-ec}
+seurat_subset = subset(seurat, subset = seurat_clusters %in% c(4, 6), invert = T)
+mat = GetAssayData(seurat_subset, assay = 'RNA', slot = 'counts')
+mat = Matrix::as.matrix(mat)
+result = CytoTRACE(mat, enableFast = F, ncores = 10)
+```
+
+Visualizing CytoTRACE results
+
+```{r vis-CytoTRACE-blood-ec, fig.height=3, fig.width=4}
+meta = FetchData(seurat_subset, vars = c('UMAP_1', 'UMAP_2', 'seurat_clusters')) %>%
+  rownames_to_column('barcode')
+
+tibble(barcode = names(result$CytoTRACE),
+       value = result$CytoTRACE) %>%
+  left_join(meta, by = 'barcode') %>%
+  ggplot(aes(x=UMAP_1, y=UMAP_2, color=value)) +
+  geom_point() +
+  scale_color_viridis_c() +
+  labs(color = 'Predicted\norder')
+```
+
+```{r vis-box-CytoTRACE-blood-ec, fig.height=3, fig.width=4}
+tibble(barcode = names(result$CytoTRACE),
+       value = result$CytoTRACE) %>%
+  left_join(meta, by = 'barcode') %>%
+  ggplot(aes(x=seurat_clusters, y=value, fill=seurat_clusters)) +
+  geom_boxplot() +
+  scale_fill_manual(values = cluster_color_maps) +
+  labs(y= 'Predicted order') +
+  theme(legend.position = 'none')
+```
+

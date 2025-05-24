@@ -1,0 +1,258 @@
+---
+title: "vdj.tcr.STARTRAC.byOrigin4"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME = "vdj.tcr.STARTRAC.byOrigin4"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+    if (before) {
+        print(paste("Start:", Sys.time()))
+        NOW <<- Sys.time()
+    } else {
+        print(paste("Stop:", Sys.time()))
+        print(Sys.time() - NOW)
+    }
+})
+
+knitr::opts_chunk$set(
+    autodep        = TRUE,
+    cache          = FALSE,
+    cache.path     = paste0("cache/", DOCNAME, "/"),
+    cache.lazy     = FALSE, 
+    cache.comments = FALSE,
+    echo           = TRUE,
+    error          = FALSE,
+    fig.align      = "center",
+    fig.width      = 10,
+    fig.height     = 8,
+    message        = FALSE,
+    warning        = FALSE,
+    timeit         = TRUE
+)
+```
+
+Load packages
+
+```{r libaries, cache = FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(patchwork)
+library(cowplot)
+library(ComplexHeatmap)
+library(pheatmap)
+library(ggpubr)
+library(ggrepel)
+library(ggcorrplot)
+library(circlize)
+theme_set(theme_cowplot())
+
+# rigde
+library(ggridges)
+
+# color
+library(ggsci)
+library(RColorBrewer)
+
+# STARTRAC
+library("Startrac")
+```
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+devtools::load_all('/T02Data/niuyw1/Rscir')
+```
+
+使用 STARTRAC 分析 VDJ
+
+## Set up
+
+Load data
+
+```{r load-data, cache=FALSE, message=FALSE, warning=FALSE}
+metadata = read_csv(here::here("output/04.rm_cells/seurat_tcells.cellmeta.csv"))
+clones = read_csv('/niuyw-usb-disk/Projects/scESCA/cellranger/TCR/200121_6samples.clonotype_tcr.csv')
+```
+
+## Neat data
+
+Merge metadata with clonotypes
+
+```{r neat}
+# in.dat
+in.dat = metadata %>%
+  left_join(clones, by = 'barcode') %>%
+  filter(!is.na(clonotype)) %>%
+  dplyr::select(Cell_Name = barcode,
+                clone.id = clonotype,
+                patient = Patient, majorCluster = level_3,
+                loc = Origin4)
+
+head(in.dat)
+```
+
+## Run
+
+```{r run, message=FALSE, warning=FALSE}
+out <- Startrac.run(in.dat, proj="scESCC", cores=1, verbose=F)
+```
+
+## All {.tabset}
+
+```{r fig.width=8, fig.height=8}
+plot(out, index.type = "cluster.all", byPatient = F)
+```
+
+### expansion
+
+```{r fig.width=8, fig.height=3}
+d4p = out@cluster.data %>%
+  group_by(majorCluster) %>%
+  summarise(m = mean(expa, na.rm=TRUE))
+
+# sort
+tmp_cd8 = d4p %>%
+  filter(str_detect(majorCluster, "CD8")) %>%
+  arrange(-m)
+tmp_cd4 = d4p %>%
+  filter(str_detect(majorCluster, "CD4")) %>%
+  arrange(-m)
+tmp_treg = d4p %>%
+  filter(str_detect(majorCluster, "Treg")) %>%
+  arrange(-m)
+tmp_gdt = d4p %>%
+  filter(str_detect(majorCluster, "γδT")) %>%
+  arrange(-m)
+tmp_nkt = d4p %>%
+  filter(str_detect(majorCluster, "NK")) %>%
+  arrange(-m)
+tmp_un = d4p %>%
+  filter(str_detect(majorCluster, "Unknown")) %>%
+  arrange(-m)
+tmp_df = rbind(tmp_cd8, tmp_cd4, tmp_treg, tmp_gdt, tmp_nkt, tmp_un)
+  
+  
+d4p %>%
+  mutate(majorCluster = factor(majorCluster, levels = tmp_df$majorCluster)) %>%
+  ggplot(aes(x = majorCluster, y = m, fill = majorCluster)) +
+  geom_col() +
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_fill_manual(values = t_level_3_color) +
+  labs(x = NULL, y = "expan.") +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        legend.position = "none")
+```
+
+### migration
+
+```{r fig.width=8, fig.height=3}
+d4p = out@cluster.data %>%
+  group_by(majorCluster) %>%
+  summarise(m = mean(migr, na.rm=TRUE))
+
+# sort
+tmp_cd8 = d4p %>%
+  filter(str_detect(majorCluster, "CD8")) %>%
+  arrange(-m)
+tmp_cd4 = d4p %>%
+  filter(str_detect(majorCluster, "CD4")) %>%
+  arrange(-m)
+tmp_treg = d4p %>%
+  filter(str_detect(majorCluster, "Treg")) %>%
+  arrange(-m)
+tmp_gdt = d4p %>%
+  filter(str_detect(majorCluster, "γδT")) %>%
+  arrange(-m)
+tmp_nkt = d4p %>%
+  filter(str_detect(majorCluster, "NK")) %>%
+  arrange(-m)
+tmp_un = d4p %>%
+  filter(str_detect(majorCluster, "Unknown")) %>%
+  arrange(-m)
+tmp_df = rbind(tmp_cd8, tmp_cd4, tmp_treg, tmp_gdt, tmp_nkt, tmp_un)
+  
+  
+d4p %>%
+  mutate(majorCluster = factor(majorCluster, levels = tmp_df$majorCluster)) %>%
+  ggplot(aes(x = majorCluster, y = m, fill = majorCluster)) +
+  geom_col() +
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_fill_manual(values = t_level_3_color) +
+  labs(x = NULL, y = "migr.") +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        legend.position = "none")
+```
+
+### transition
+
+```{r fig.width=8, fig.height=3}
+d4p = out@cluster.data %>%
+  group_by(majorCluster) %>%
+  summarise(m = mean(tran, na.rm=TRUE))
+
+# sort
+tmp_cd8 = d4p %>%
+  filter(str_detect(majorCluster, "CD8")) %>%
+  arrange(-m)
+tmp_cd4 = d4p %>%
+  filter(str_detect(majorCluster, "CD4")) %>%
+  arrange(-m)
+tmp_treg = d4p %>%
+  filter(str_detect(majorCluster, "Treg")) %>%
+  arrange(-m)
+tmp_gdt = d4p %>%
+  filter(str_detect(majorCluster, "γδT")) %>%
+  arrange(-m)
+tmp_nkt = d4p %>%
+  filter(str_detect(majorCluster, "NK")) %>%
+  arrange(-m)
+tmp_un = d4p %>%
+  filter(str_detect(majorCluster, "Unknown")) %>%
+  arrange(-m)
+tmp_df = rbind(tmp_cd8, tmp_cd4, tmp_treg, tmp_gdt, tmp_nkt, tmp_un)
+  
+  
+d4p %>%
+  mutate(majorCluster = factor(majorCluster, levels = tmp_df$majorCluster)) %>%
+  ggplot(aes(x = majorCluster, y = m, fill = majorCluster)) +
+  geom_col() +
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_fill_manual(values = t_level_3_color) +
+  labs(x = NULL, y = "tran.") +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        legend.position = "none")
+```
+
+## by patients
+
+```{r fig.width=8, fig.height=8}
+plot(out, index.type="cluster.all", byPatient=T)
+```
+
+## pairwise transition
+
+```{r fig.width=8, fig.height=8}
+plot(out, index.type="pairwise.tran", byPatient=F)
+```
+
+## pairwise migration
+
+```{r fig.width=8, fig.height=20}
+plot(out, index.type="pairwise.migr", byPatient=F)
+```
+
+## Save
+
+```{r save}
+saveRDS(out, file = here::here("output", DOCNAME, "STARTRAC.out.rds"))
+```
+
+## Session
+

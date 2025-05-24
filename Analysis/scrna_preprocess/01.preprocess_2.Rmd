@@ -1,0 +1,627 @@
+---
+title: "01.preprocess_2"
+---
+```{r knitr, include = FALSE}
+DOCNAME = "01.preprocess_2"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+dir.create(here::here("docs", "assets", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+    if (before) {
+        print(paste("Start:", Sys.time()))
+        NOW <<- Sys.time()
+    } else {
+        print(paste("Stop:", Sys.time()))
+        print(Sys.time() - NOW)
+    }
+})
+
+knitr::opts_chunk$set(
+    autodep        = TRUE,
+    cache          = TRUE,
+    cache.path     = paste0("cache/", DOCNAME, "/"),
+    cache.lazy     = FALSE, 
+    cache.comments = FALSE,
+    echo           = TRUE,
+    error          = FALSE,
+    fig.align      = "center",
+    fig.width      = 10,
+    fig.height     = 8,
+    message        = FALSE,
+    warning        = FALSE,
+    timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE}
+# Tidyverse
+library(tidyverse)
+
+# ggplot
+library(cowplot)
+library(ggpubr)
+library(ggcorrplot)
+library(ggrepel)
+theme_set(theme_cowplot())
+
+# heatmap
+library(pheatmap)
+
+# color
+library(ggsci)
+library(RColorBrewer)
+
+# single cell
+library(Seurat)
+library(SingleCellExperiment)
+library(scater)
+library(scran)
+
+# enrich
+library(clusterProfiler)
+library(org.Hs.eg.db)
+```
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+Load rds directly (since the process is too slow)
+
+```{r load-rds, cache=FALSE}
+seurat.raw = readRDS(here::here('output', '01.preprocess', 'seurat.raw.rds'))
+seurat.raw
+seurat = readRDS(here::here('output', DOCNAME, 'seurat.rds'))
+Idents(seurat) <- 'seurat_clusters'
+seurat
+```
+
+Load count data
+
+```{r load-count, cache = FALSE, eval=FALSE}
+# seurat
+seurat = readRDS(here::here('output', DOCNAME, 'seurat.rds'))
+
+# seurat.raw
+count.dir = file.path('/niuyw-usb-disk/Projects/scESCA/cellranger/200227_6samples/filtered_feature_bc_matrix')
+seurat.data = Read10X(data.dir = count.dir)
+seurat.raw <- CreateSeuratObject(counts = seurat.data, project = "200227_6samples", names.field = 2, names.delim = "\\-")
+seurat.raw
+```
+
+Load sample information
+
+```{r load-saminfo, cache = FALSE, eval=FALSE}
+# read sample information
+seurat.raw@misc$sam_info = read.table(here::here('data', 'sample_info.txt'), sep = '\t', header = T)
+```
+
+Load TCR/BCR mat
+
+```{r load-vdj, cache = FALSE, eval=FALSE}
+vdj_stats = read_delim('/niuyw-usb-disk/Projects/scESCA/cellranger/vdj_stats.cells.txt', delim = '\t') %>%
+  dplyr::select(barcode, VDJ, IGHC) %>%
+  mutate(IGHC = case_when(
+    IGHC %in% c('IGHM') ~ 'IgM',
+    IGHC %in% c('IGHD') ~ 'IgD',
+    IGHC %in% c('IGHG1', 'IGHG2', 'IGHG3', 'IGHG4') ~ 'IgG',
+    IGHC %in% c('IGHA1', 'IGHA2') ~ 'IgA',
+    IGHC %in% c('IGHE') ~ 'IgE',
+    IGHC %in% c('None') ~ 'None'
+  ))
+
+seurat.raw@meta.data = seurat.raw@meta.data %>%
+  rownames_to_column(var = 'barcode') %>%
+  left_join(vdj_stats, by = 'barcode') %>% 
+  mutate(VDJ = replace_na(VDJ, 'None')) %>%
+  mutate(VDJ = fct_relevel(VDJ, levels = c('None', 'Both', 'BCR', 'TCR'))) %>%
+  mutate(IGHC = replace_na(IGHC, 'None')) %>%
+  mutate(IGHC = fct_relevel(IGHC, levels = c('IgM', 'IgD', 'IgG', 'IgA', 'IgE', 'None'))) %>%
+  column_to_rownames(var = 'barcode')
+
+seurat@meta.data = seurat@meta.data %>%
+  rownames_to_column(var = 'barcode') %>%
+  left_join(vdj_stats, by = 'barcode') %>% 
+  mutate(VDJ = replace_na(VDJ, 'None')) %>%
+  mutate(VDJ = fct_relevel(VDJ, levels = c('TCR', 'BCR', 'Both', 'None'))) %>%
+  mutate(IGHC = replace_na(IGHC, 'None')) %>%
+  mutate(IGHC = fct_relevel(IGHC, levels = c('IgM', 'IgD', 'IgG', 'IgA', 'None'))) %>%
+  column_to_rownames(var = 'barcode')
+```
+
+## Fix cell origin
+
+```{r fix-cell-origin, cache=FALSE, eval=FALSE}
+# fix origin
+cell_num.raw = seurat.raw@meta.data %>% 
+  mutate(orig.ident = fct_relevel(orig.ident, as.character(c(1:73)))) %>%  # very important!
+  group_by(orig.ident) %>% 
+  summarise(n = n())
+seurat.raw@misc$sam_info$cell.raw = cell_num.raw$n
+
+# cell filtered
+cell_num.filtered = seurat@meta.data %>%
+  dplyr::rename(Source = orig.ident) %>% 
+  group_by(Source) %>% 
+  summarise(cell.filtered = n())
+
+seurat@misc$sam_info = seurat.raw@misc$sam_info
+seurat@misc$sam_info = seurat@misc$sam_info %>%
+  as.tbl() %>%
+  left_join(cell_num.filtered, by = 'Source')
+
+# set identity
+Idents(seurat.raw) = rep(seurat.raw@misc$sam_info$Source, cell_num.raw$n)
+Idents(seurat) = seurat$orig.ident
+
+# add more metadata
+# Patient
+seurat.raw$Patient = factor(rep(seurat.raw@misc$sam_info$Patient, cell_num.raw$n),
+                            c("S0619", "S0730", "S0819", "S0920", "S1125", "S1204"))
+seurat$Patient = factor(rep(seurat@misc$sam_info$Patient, seurat@misc$sam_info$cell.filtered),
+                        c("S0619", "S0730", "S0819", "S0920", "S1125", "S1204"))
+# Source
+seurat.raw$Source = Idents(seurat.raw)
+seurat$Source = Idents(seurat)
+# Tissue
+seurat.raw$Tissue = factor(rep(seurat.raw@misc$sam_info$Tissue, cell_num.raw$n),
+                           c("PBMC", "LN", "Normal", "Adjacent", "Tumor"))
+seurat$Tissue = factor(rep(seurat@misc$sam_info$Tissue, seurat@misc$sam_info$cell.filtered),
+                       c("PBMC", "LN", "Normal", "Adjacent", "Tumor"))
+# Origin
+seurat.raw$Origin = factor(rep(seurat.raw@misc$sam_info$Origin, cell_num.raw$n),
+                           c("PBMC1", "PBMC2",
+                             'LN-LR', 'LN-RR', 'LN-UTP1', 'LN-UTP2', 'LN-ITP', 'LN-LTP', 'LN-LP', 'LN-LP1', 'LN-LP2', 'LN-LG',
+                             "Normal", "Adjacent",
+                             "Tumor_core", "Tumor_invasion", "Tumor_middle"))
+seurat$Origin = factor(rep(seurat@misc$sam_info$Origin, seurat@misc$sam_info$cell.filtered),
+                       c("PBMC1", "PBMC2",
+                         'LN-LR', 'LN-RR', 'LN-UTP1', 'LN-UTP2', 'LN-ITP', 'LN-LTP', 'LN-LP', 'LN-LP1', 'LN-LP2', 'LN-LG',
+                         "Normal", "Adjacent",
+                         "Tumor_core", "Tumor_invasion", "Tumor_middle"))
+
+# Metastasis
+seurat.raw$Metastasis = factor(rep(seurat.raw@misc$sam_info$Metastasis, cell_num.raw$n),
+                               c("None", "N", "P"))
+seurat$Metastasis = factor(rep(seurat@misc$sam_info$Metastasis, seurat@misc$sam_info$cell.filtered),
+                           c("None", "N", "P"))
+```
+
+## Compute confounders {.tabset}
+
+percent.mt
+
+```{r percent.mt, eval=FALSE}
+# The [[ operator can add columns to object metadata. This is a great place to stash QC stats
+seurat.raw[["percent.mt"]] <- PercentageFeatureSet(seurat.raw, pattern = "^MT-")
+seurat[["percent.mt"]] <- PercentageFeatureSet(seurat, pattern = "^MT-")
+```
+
+percent.heat
+
+```{r percent.heat, eval=FALSE}
+seurat.raw[["percent.heat"]] <- PercentageFeatureSet(seurat.raw, features = filter_features(seurat.raw, heat_genes.hs))
+seurat[["percent.heat"]] <- PercentageFeatureSet(seurat, features = filter_features(seurat, heat_genes.hs))
+```
+
+percent.dissociation
+
+```{r percent.dissociation, eval=FALSE}
+seurat.raw[["percent.dissociation"]] <- PercentageFeatureSet(seurat.raw, features = filter_features(seurat.raw, dissocitaion_genes.hs))
+seurat[["percent.dissociation"]] <- PercentageFeatureSet(seurat, features = filter_features(seurat, dissocitaion_genes.hs))
+```
+
+percent.ribo
+
+```{r percent.ribo, eval=FALSE}
+RPS.genes <- grep(pattern = "^RPS", x = rownames(seurat.raw), value = TRUE)
+RPL.genes <- grep(pattern = "^RPL", x = rownames(seurat.raw), value = TRUE)
+
+ribo.genes = c(RPS.genes, RPL.genes)
+seurat.raw[["percent.ribo"]] <- PercentageFeatureSet(seurat.raw, features = ribo.genes)
+seurat[["percent.ribo"]] <- PercentageFeatureSet(seurat, features = ribo.genes)
+```
+
+mRNA catabolic processes (GO:0061014)
+
+```{r mRNA.catabolic, eval=FALSE}
+seurat.raw[["mRNA.catabolic"]] <- PercentageFeatureSet(seurat.raw, features = filter_features(seurat.raw, mRNA_catabolic.hs))
+seurat[["mRNA.catabolic"]] <- PercentageFeatureSet(seurat, features = filter_features(seurat, mRNA_catabolic.hs))
+```
+
+ribonuclease activity (GO:0004540)
+
+```{r ribonuclease.activity, eval=FALSE}
+seurat.raw[["ribonuclease.activity"]] <- PercentageFeatureSet(seurat.raw, features = filter_features(seurat.raw, ribonuclease_activity.hs))
+seurat[["ribonuclease.activity"]] <- PercentageFeatureSet(seurat, features = filter_features(seurat, ribonuclease_activity.hs))
+```
+
+cell cycle
+
+```{r cell-cycle, eval=FALSE}
+# update gene symbols
+cc.genes$s.genes = UpdateSymbolList(symbols = cc.genes$s.genes)
+cc.genes$g2m.genes = UpdateSymbolList(symbols = cc.genes$g2m.genes)
+
+seurat.raw <- CellCycleScoring(seurat.raw, s.features = cc.genes$s.genes, g2m.features = cc.genes$g2m.genes, set.ident = F)
+seurat.raw$CC.Difference <- seurat.raw$S.Score - seurat.raw$G2M.Score
+
+seurat <- CellCycleScoring(seurat, s.features = cc.genes$s.genes, g2m.features = cc.genes$g2m.genes, set.ident = F)
+seurat$CC.Difference <- seurat$S.Score - seurat$G2M.Score
+```
+
+Visualize QC metrics as a violin plot
+
+### Raw
+
+```{r vis-confounders, fig.width=12}
+# UMIs
+VlnPlot(seurat.raw, features = 'nCount_RNA', group.by = 'Source', pt.size = 0) +
+  NoLegend()
+# nFeature_RNA
+VlnPlot(seurat.raw, features = 'nFeature_RNA', group.by = 'Source', pt.size = 0) +
+  geom_hline(yintercept = c(200, 300, 500, 2000, 3000, 4000)) +
+  NoLegend()
+# Percent of mt
+VlnPlot(seurat.raw, features = 'percent.mt', group.by = 'Source', pt.size = 0) +
+  geom_hline(yintercept = c(10, 20, 30)) +
+  NoLegend()
+# percent.ribo
+VlnPlot(seurat.raw, features = 'percent.ribo', group.by = 'Source', pt.size = 0) +
+  geom_hline(yintercept = c(10, 20, 30)) +
+  NoLegend()
+# percent.heat
+VlnPlot(seurat.raw, features = 'percent.heat', group.by = 'Source', pt.size = 0) +
+  NoLegend()
+```
+
+Use FeatureScatter to visualize feature-feature relationships
+
+```{r vis-umi-mt}
+FeatureScatter(seurat.raw, feature1 = "nCount_RNA", feature2 = "percent.mt")
+```
+
+```{r vis-umi-rna}
+FeatureScatter(seurat.raw, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+```
+
+### Filtered
+
+```{r vis-confounders-2, fig.width=12}
+# UMIs
+VlnPlot(seurat, features = 'nCount_RNA', group.by = 'Source', pt.size = 0) +
+  NoLegend()
+# nFeature_RNA
+VlnPlot(seurat, features = 'nFeature_RNA', group.by = 'Source', pt.size = 0) +
+  geom_hline(yintercept = c(200, 300, 500, 2000, 3000, 4000)) +
+  NoLegend()
+# Percent of mt
+VlnPlot(seurat, features = 'percent.mt', group.by = 'Source', pt.size = 0) +
+  geom_hline(yintercept = c(10, 20, 30)) +
+  NoLegend()
+# percent.ribo
+VlnPlot(seurat, features = 'percent.ribo', group.by = 'Source', pt.size = 0) +
+  geom_hline(yintercept = c(10, 20, 30)) +
+  NoLegend()
+# percent.heat
+VlnPlot(seurat, features = 'percent.heat', group.by = 'Source', pt.size = 0) +
+  NoLegend()
+```
+
+## Sample metrics
+
+This table shows the median and mad of metrics of each sample
+
+```{r qc-metrics}
+sample_qc_metrics = seurat.raw@meta.data %>%
+  group_by(Source) %>%
+  summarise(cell_num = n(),
+            median.umi = median(nCount_RNA),
+            median.genes = median(nFeature_RNA),
+            median.mt = median(percent.mt),
+            median.ribo = median(percent.ribo),
+            median.heat = median(percent.heat),
+            median.dissociation = median(percent.dissociation)
+  )
+write_csv(sample_qc_metrics, path = here::here('output', DOCNAME, 'sample_qc_metrics.csv'))
+
+DT::datatable(
+  sample_qc_metrics,
+  filter = 'top'
+)
+```
+
+## Filter
+
+Filter out low-quality cells
+
+```{r filter, eval=FALSE}
+reasons = lowQuality_filter(seurat.raw, gene_fixed_low = 500, gene_fixed_high = 3000)
+seurat.raw@misc$reasons = reasons
+seurat@misc$reasons = seurat.raw@misc$reasons
+```
+
+Show the cells filtered
+
+```{r show-filter-num}
+DT::datatable(
+  seurat@misc$reasons %>%
+    group_by(Source) %>%
+    summarise(low_lib_size = sum(low_lib_size),
+              low_n_features = sum(low_n_features),
+              high_n_features = sum(high_n_features),
+              high_percent.mt = sum(high_percent.mt),
+              high_percent.ribo = sum(high_percent.ribo),
+              high_percent.dissociation = sum(high_percent.dissociation),
+              high_percent.heat = sum(high_percent.heat),
+              discard = sum(discard)),
+  filter = 'top'
+)
+```
+
+This table shows the cell numbers of before and after filtering
+
+```{r show-cell-num}
+DT::datatable(
+  seurat@misc$sam_info %>%
+    dplyr::select(Source, cell.raw, cell.filtered) %>%
+    mutate(cell.discard = cell.raw - cell.filtered),
+  filter = 'top'
+)
+```
+
+## Normalize
+
+```{r normalize, eval=FALSE}
+seurat <- NormalizeData(seurat, normalization.method = "LogNormalize", scale.factor = 10000, verbose = T)
+```
+
+## Find varible genes
+
+```{r find-variable, eval=FALSE}
+vst_each = c()
+for (i in unique(seurat$Source)) {
+  seurat_obj = subset(seurat, subset = Source == i)
+  seurat_obj = FindVariableFeatures(seurat_obj, selection.method = 'vst', nfeatures = 500)
+  vst_each = c(VariableFeatures(seurat_obj), vst_each)
+}
+VariableFeatures(seurat) = unique(vst_each)
+```
+
+## Scale
+
+Apply a linear transformation ('scaling') that is a standard pre-processing step prior to dimensional reduction techniques like PCA.
+
+```{r scale-data, eval=FALSE}
+vars.to.regress = c('nCount_RNA', 'percent.mt', 'percent.ribo', 'percent.dissociation', 'percent.heat', 'CC.Difference')
+seurat <- ScaleData(seurat, features = VariableFeatures(seurat), vars.to.regress = vars.to.regress, verbose = T)
+```
+
+## Perform linear dimensional reduction
+
+Perform PCA on the scaled data. By default, only the previously determined variable features are used as input, but can be defined using features argument if you wish to choose a different subset.
+
+```{r pca, eval=FALSE}
+seurat <- RunPCA(seurat, features = VariableFeatures(seurat), npcs = 50, nfeatures.print = 5)
+```
+
+Examine and visualize PCA results a few different ways
+
+```{r VizDimLoadings}
+VizDimLoadings(seurat, dims = 1:2, reduction = "pca")
+```
+
+```{r plot-pca-confounders, fig.width=10, fig.height=6}
+# potential confounders
+vars.to.regress = c('nCount_RNA', 'percent.mt', 'percent.ribo', 'percent.dissociation', 'percent.heat', 'CC.Difference')
+FeaturePlot(seurat, reduction = "pca", features = vars.to.regress, ncol = 3)
+```
+
+Check the correlation of PC scores and confounders
+
+```{r confounder-check, fig.width=4, fig.height=6}
+confounder_check(seurat, vars.to.regress)
+```
+
+## Determine the 'dimensionality' of the dataset
+
+How many components should we choose to include? 10? 20? 100?
+
+An heuristic method generates an 'Elbow plot': a ranking of principle components based on the percentage of variance explained by each one.
+
+```{r ElbowPlot}
+ElbowPlot(seurat, ndims = 50)
+```
+
+We will identify a PC threshold by calculating where the principal components start to elbow by taking the larger value of:
+
+1. The point where the principal components only contribute 5% of standard deviation and the principal components cumulatively contribute 90% of the standard deviation.
+2. The point where the percent change in variation between the consecutive PCs is less than 0.1%.
+
+```{r determine-pc-num}
+determine_pc_num(seurat)
+```
+
+## Cluster the cells {.tabset}
+
+First construct a KNN graph based on the euclidean distance in PCA space, and refine the edge weights between any two cells based on the shared overlap in their local neighborhoods (Jaccard similarity).
+
+```{r FindNeighbors, eval=FALSE}
+pc_num = 13
+seurat <- FindNeighbors(seurat, dims = 1:pc_num, verbose = T)
+```
+
+Next apply modularity optimization techniques such as the Louvain algorithm (default) or SLM, to iteratively group cells together, with the goal of optimizing the standard modularity function.
+
+We can do Leiden clustering. Leiden is an improvement over Louvain that guarantees that clusters are well-connected on the k nearest neighbor graph.
+
+```{r FindClusters, eval=FALSE}
+# currently leiden is slow, so I still use Louvain
+seurat <- FindClusters(seurat, resolution = 1, algorithm = 1, random.seed = 123, verbose = T)
+```
+
+Dim-reduction for visualization
+
+```{r dim-reduction, eval=FALSE}
+# Run UMAP
+seurat = RunUMAP(seurat, dims = 1:pc_num, min.dist = 0.5, n.neighbors = 30, verbose = T)
+# Run tSNE
+seurat = RunTSNE(seurat, dims = 1:pc_num, tsne.method = "FIt-SNE", nthreads = 4, max_iter = 2000, verbose = T)
+```
+
+Visualize
+
+```{r child-1-preprocess, cache=FALSE}
+src <- knitr::knit_expand(file = here::here("analysis/child/preprocess.Rmd"))
+```
+
+`r knitr::knit(text = unlist(src))`
+
+## Markers of each cluster
+
+```{r find-markers, eval=FALSE}
+cluster.markers = FindAllMarkers(seurat, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25, verbose = T)
+write_csv(cluster.markers, path = here::here('output', DOCNAME, 'cluster.markers.csv'))
+```
+
+```{r load-markers}
+cluster.markers = read_csv(here::here('output', DOCNAME, 'cluster.markers.csv'))
+DT::datatable(cluster.markers %>% 
+                group_by(cluster) %>% 
+                top_n(n = 2, wt = avg_logFC),
+              filter = 'top')
+```
+
+## Plot canonical markers {.tabset}
+
+Each genes
+
+```{r marker-dot-plot, fig.height=12, fig.width=12}
+# Plot several canonical markers to classify cells
+DotPlot(seurat, features = rev(unlist(markers.to.plot)), dot.scale = 4, group.by = 'seurat_clusters') +
+  RotatedAxis() + 
+  theme(axis.text.x = element_text(size = rel(0.7)),
+        axis.text.y = element_text(size = rel(0.9)),
+        panel.grid = element_line(color = 'grey'),
+        legend.position = 'bottom',
+        legend.box = 'vertical')
+```
+
+Average
+
+```{r marker-dot-plot-ave, fig.height=12, fig.width=12}
+AveDotPlot(seurat, features = markers.to.plot, group.by = 'seurat_clusters') +
+  RotatedAxis() + 
+  theme(panel.grid = element_line(color = 'grey'))
+```
+
+Marker expression of each cluster
+
+```{r marker-clusters, results = "hide"}
+seurat_clusters = levels(seurat$seurat_clusters)
+src_list <- lapply(seurat_clusters, function(cluster){
+    src <- c(
+        "### Cluster {{cluster}} {.unnumbered}",
+        "```{r marker-clusters-{{cluster}}}",
+        "gene_BoxPlot2(subset(seurat, subset = seurat_clusters == '{{cluster}}'), unlist(markers.to.plot)) + theme(axis.text.x = element_text(size = rel(0.6)))",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+## Enrichment analysis of markers {.tabset}
+
+```{r enrichment-analysis, fig.width=12, eval=FALSE}
+i = 0
+genes = cluster.markers[cluster.markers$cluster == i,]$gene
+genes = bitr(genes, fromType="SYMBOL", toType=c("ENTREZID"), OrgDb="org.Hs.eg.db")[,2]
+ek = enrichKEGG(genes, organism = 'hsa', pvalueCutoff = 0.05, use_internal_data = T)
+eBP = enrichGO(genes, OrgDb = org.Hs.eg.db, ont = "BP", pAdjustMethod = "BH", pvalueCutoff = 0.01, qvalueCutoff = 0.05, readable = T)
+vis_enrich_bar(ek, eBP)
+```
+
+```{r enriche-each-cluster, results = "hide"}
+clusters = levels(seurat$seurat_clusters)
+src_list <- lapply(clusters, function(s){
+    src <- c(
+        "### Cluster {{s}} {.unnumbered}",
+        "```{r cluster-{{s}}-enrich, fig.width=12, fig.height=10}",
+        "genes = cluster.markers[cluster.markers$cluster == {{s}},]$gene",
+        "genes = bitr(genes, fromType='SYMBOL', toType=c('ENTREZID'), OrgDb='org.Hs.eg.db')[,2]",
+        "ek = enrichKEGG(genes, organism = 'hsa', pvalueCutoff = 0.05, use_internal_data = T)",
+        "eBP = enrichGO(genes, OrgDb = org.Hs.eg.db, ont = 'BP', pAdjustMethod = 'BH', pvalueCutoff = 0.01, qvalueCutoff = 0.05, readable = T)",
+        "vis_enrich_bar(ek, eBP)",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+## Save
+
+rds
+
+```{r save, eval=FALSE}
+saveRDS(seurat, file = here::here('output', DOCNAME, 'seurat.rds'))
+saveRDS(seurat.raw, file = here::here('output', DOCNAME, 'seurat.raw.rds'))
+```
+
+cell meta
+
+```{r save-cell-meta, eval=FALSE}
+vars = c('Patient', 'Source', 'Tissue', 'Origin', 'Metastasis')
+cell_meta = FetchData(seurat.raw, vars = vars) %>% rownames_to_column('barcode')
+write_csv(cell_meta, path = here::here('output', DOCNAME, 'seurat.raw.cellmeta.csv'))
+
+vars = c('Patient', 'Source', 'Tissue', 'Origin', 'Metastasis')
+cell_meta = FetchData(seurat, vars = vars) %>% rownames_to_column('barcode')
+write_csv(cell_meta, path = here::here('output', DOCNAME, 'seurat.cellmeta.csv'))
+```
+
+sample infor
+
+```{r save-sample-info, eval=FALSE}
+write_csv(seurat@misc$sam_info, path = here::here('data', 'sample_info.csv'))
+```
+
+## Summary
+
+We preprocess the scRNA-seq data using Seurat and get 46 clusters.
+
+### Output files
+
+```{r output-files}
+# create dir for output files
+dir.create(here::here("docs/assets", DOCNAME), showWarnings = FALSE)
+
+# markers of each cluster
+file.copy(here::here('output', DOCNAME, 'cluster.markers.csv'), here::here("docs/assets", DOCNAME), overwrite = TRUE)
+
+knitr::kable(data.frame(
+  File = c(
+    "[cluster.markers.csv](assets/01.preprocess_2/cluster.markers.csv)"
+  ),
+  Description = c(
+    "markers of each cluster"
+  )
+))
+```

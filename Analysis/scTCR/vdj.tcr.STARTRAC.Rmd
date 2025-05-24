@@ -1,0 +1,689 @@
+---
+title: "vdj.tcr.STARTRAC"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME = "vdj.tcr.STARTRAC"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+    if (before) {
+        print(paste("Start:", Sys.time()))
+        NOW <<- Sys.time()
+    } else {
+        print(paste("Stop:", Sys.time()))
+        print(Sys.time() - NOW)
+    }
+})
+
+knitr::opts_chunk$set(
+    autodep        = TRUE,
+    cache          = FALSE,
+    cache.path     = paste0("cache/", DOCNAME, "/"),
+    cache.lazy     = FALSE, 
+    cache.comments = FALSE,
+    echo           = TRUE,
+    error          = FALSE,
+    fig.align      = "center",
+    fig.width      = 10,
+    fig.height     = 8,
+    message        = FALSE,
+    warning        = FALSE,
+    timeit         = TRUE
+)
+```
+
+Load packages
+
+```{r libaries, cache = FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(patchwork)
+library(cowplot)
+library(ComplexHeatmap)
+library(pheatmap)
+library(ggpubr)
+library(ggrepel)
+library(ggcorrplot)
+library(circlize)
+theme_set(theme_cowplot())
+
+# rigde
+library(ggridges)
+
+# color
+library(ggsci)
+library(RColorBrewer)
+
+# STARTRAC
+library("Startrac")
+```
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+devtools::load_all('/T02Data/niuyw1/Rscir')
+```
+
+使用 STARTRAC 分析 VDJ
+
+## Set up
+
+Load data
+
+```{r load-data, cache=FALSE, message=FALSE, warning=FALSE}
+metadata = read_csv(here::here("output/04.rm_cells/seurat_tcells.cellmeta.csv"))
+clones = read_csv('/niuyw-usb-disk/Projects/scESCA/cellranger/TCR/200121_6samples.clonotype_tcr.csv')
+
+out = readRDS(here::here("output", DOCNAME, "STARTRAC.out.rds"))
+```
+
+## Neat data
+
+Merge metadata with clonotypes
+
+```{r neat}
+# in.dat
+in.dat = metadata %>%
+  left_join(clones, by = 'barcode') %>%
+  filter(!is.na(clonotype)) %>%
+  dplyr::select(Cell_Name = barcode, clone.id = clonotype,
+                patient = Patient, majorCluster = level_3, loc = Origin2_n)
+
+head(in.dat)
+```
+
+## Run
+
+```{r run, message=FALSE, warning=FALSE, eval=FALSE}
+out <- Startrac.run(in.dat, proj="scESCC", cores=8, verbose=F)
+```
+
+## Plot all {.tabset}
+
+### by patient
+
+```{r fig.width=8, fig.height=8}
+plot(out, index.type="cluster.all", byPatient=T)
+```
+
+### Not by patient
+
+```{r fig.width=8, fig.height=8}
+plot(out, index.type = "cluster.all", byPatient = F)
+```
+
+## expansion {.tabset}
+
+### by patient
+
+sort by mean
+
+```{r fig.width=8, fig.height=3}
+tmp_df = out@cluster.data %>%
+  filter(aid != "scESCC") %>%
+  group_by(majorCluster) %>%
+  summarise(m = mean(expa, na.rm=TRUE))
+
+# sort
+tmp_cd8 = tmp_df %>%
+  filter(str_detect(majorCluster, "CD8")) %>%
+  arrange(-m)
+tmp_cd4 = tmp_df %>%
+  filter(str_detect(majorCluster, "CD4")) %>%
+  arrange(-m)
+tmp_treg = tmp_df %>%
+  filter(str_detect(majorCluster, "Treg")) %>%
+  arrange(-m)
+tmp_gdt = tmp_df %>%
+  filter(str_detect(majorCluster, "γδT")) %>%
+  arrange(-m)
+tmp_nkt = tmp_df %>%
+  filter(str_detect(majorCluster, "NK")) %>%
+  arrange(-m)
+tmp_un = tmp_df %>%
+  filter(str_detect(majorCluster, "Unknown")) %>%
+  arrange(-m)
+tmp_df = rbind(tmp_cd8, tmp_cd4, tmp_treg, tmp_gdt, tmp_nkt, tmp_un)
+
+out@cluster.data %>%
+  filter(aid != "scESCC") %>%
+  mutate(majorCluster = factor(majorCluster, levels = tmp_df$majorCluster)) %>%
+  ggplot(aes(x = majorCluster, y = expa, color  = majorCluster)) +
+  geom_boxplot() +
+  geom_point() +
+  scale_color_manual(values = t_level_3_color) +
+  labs(x = NULL) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        legend.position = "none")
+```
+
+```{r}
+tmp_df %>%
+  dplyr::rename(expa = m) %>%
+  mutate(type = case_when(
+    expa > 0.1 ~ "+++",
+    expa > 0.05 & expa <= 0.1 ~ "++",
+    expa > 0.005 & expa <= 0.05 ~ "+",
+    expa <= 0.005 ~ "-"
+  )) %>%
+  DT::datatable()
+```
+
+### Not by patient
+
+```{r fig.width=8, fig.height=3}
+d4p = out@cluster.data %>%
+  filter(aid == "scESCC") %>%
+  mutate(m = expa)
+
+# sort
+tmp_cd8 = d4p %>%
+  filter(str_detect(majorCluster, "CD8")) %>%
+  arrange(-m)
+tmp_cd4 = d4p %>%
+  filter(str_detect(majorCluster, "CD4")) %>%
+  arrange(-m)
+tmp_treg = d4p %>%
+  filter(str_detect(majorCluster, "Treg")) %>%
+  arrange(-m)
+tmp_gdt = d4p %>%
+  filter(str_detect(majorCluster, "γδT")) %>%
+  arrange(-m)
+tmp_nkt = d4p %>%
+  filter(str_detect(majorCluster, "NK")) %>%
+  arrange(-m)
+tmp_un = d4p %>%
+  filter(str_detect(majorCluster, "Unknown")) %>%
+  arrange(-m)
+tmp_df = rbind(tmp_cd8, tmp_cd4, tmp_treg, tmp_gdt, tmp_nkt, tmp_un)
+
+d4p %>%
+  mutate(majorCluster = factor(majorCluster, levels = tmp_df$majorCluster)) %>%
+  ggplot(aes(x = majorCluster, y = m, fill = majorCluster)) +
+  geom_col() +
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_fill_manual(values = t_level_3_color) +
+  labs(x = NULL) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        legend.position = "none")
+```
+
+```{r}
+d4p %>%
+  mutate(type = case_when(
+    expa > 0.1 ~ "+++",
+    expa > 0.05 & expa <= 0.1 ~ "++",
+    expa > 0.005 & expa <= 0.05 ~ "+",
+    expa <= 0.005 ~ "-"
+  )) %>%
+  DT::datatable()
+```
+
+## expansion and proliferative freq. {.tabset}
+
+### Not by patient
+
+```{r fig.width=6, fig.height=6}
+df_cellNum = metadata %>%
+  group_by(level_3) %>%
+  summarise(cellNum = log2(n())) %>%
+  dplyr::rename(majorCluster = level_3)
+
+metadata %>%
+  group_by(level_3, Phase) %>%
+  summarise(n = n()) %>%
+  mutate(freq = n/sum(n)) %>%
+  filter(Phase == "G2M") %>%
+  dplyr::rename(majorCluster = level_3) %>%
+  left_join(out@cluster.data %>%
+              filter(aid == "scESCC"), by = "majorCluster") %>%
+  left_join(df_cellNum) %>%
+  ggplot(aes(x = freq, y = expa, color = majorCluster, size = cellNum)) +
+  geom_point() +
+  scale_color_manual(values = t_level_3_color) +
+  geom_text_repel(aes(label = majorCluster), max.overlaps = 20) +
+  labs(x = "Freq. of prolif.", size = "log2(cellNum)") +
+  guides(color = FALSE) +
+  theme(legend.position = "top")
+```
+
+### by patient
+
+```{r fig.width=6, fig.height=6}
+df_cellNum = metadata %>%
+  group_by(level_3) %>%
+  summarise(cellNum = log2(n())) %>%
+  dplyr::rename(majorCluster = level_3)
+
+dat_expa = out@cluster.data %>%
+  filter(aid != "scESCC") %>%
+  group_by(majorCluster) %>%
+  summarise(m_expa = mean(expa, na.rm = TRUE))
+
+dat_freqProlif = metadata %>%
+  group_by(Patient, level_3, Phase) %>%
+  summarise(n = n()) %>%
+  mutate(freq = n/sum(n)) %>%
+  filter(Phase == "G2M", n >= 10) %>% # at least 10 cells
+  ungroup() %>%
+  group_by(level_3) %>% #filter(level_3 == "CD8-C12-Tex")
+  summarise(m_freq = mean(freq)) %>%
+  dplyr::rename(majorCluster = level_3)
+
+dat_expa %>%
+  left_join(dat_freqProlif) %>%
+  left_join(df_cellNum) %>%
+  ggplot(aes(x = m_freq, y = m_expa, color = majorCluster, size = cellNum)) +
+  geom_point() +
+  scale_color_manual(values = t_level_3_color) +
+  geom_text_repel(aes(label = majorCluster), max.overlaps = 20) +
+  labs(x = "Freq. of prolif.", size = "log2(cellNum)") +
+  guides(color = FALSE) +
+  theme(legend.position = "top")
+```
+
+## expa. vs. migr. {.tabset}
+
+### Not by patient
+
+```{r fig.width=6, fig.height=5}
+out@cluster.data %>%
+  filter(aid == "scESCC") %>%
+  ggplot(aes(x = expa, y = migr, color = majorCluster)) +
+  geom_point() +
+  geom_text_repel(aes(label = majorCluster)) +
+  scale_color_manual(values = t_level_3_color) +
+  #labs(x = "") +
+  theme(legend.position = "none")
+```
+
+### by patient
+
+```{r fig.width=6, fig.height=5}
+out@cluster.data %>%
+  filter(aid != "scESCC") %>%
+  group_by(majorCluster) %>%
+  summarise(m_expa = mean(expa, na.rm = TRUE),
+            m_migr = mean(migr, na.rm = TRUE)) %>%
+  ggplot(aes(x = m_expa, y = m_migr, color = majorCluster)) +
+  geom_point() +
+  geom_text_repel(aes(label = majorCluster)) +
+  scale_color_manual(values = t_level_3_color) +
+  theme(legend.position = "none")
+```
+
+## migration {.tabset}
+
+### by patient
+
+sort by mean
+
+```{r fig.width=8, fig.height=3}
+tmp_df = out@cluster.data %>%
+  filter(aid != "scESCC") %>%
+  group_by(majorCluster) %>%
+  summarise(m = mean(migr, na.rm=TRUE))
+
+# sort
+tmp_cd8 = tmp_df %>%
+  filter(str_detect(majorCluster, "CD8")) %>%
+  arrange(-m)
+tmp_cd4 = tmp_df %>%
+  filter(str_detect(majorCluster, "CD4")) %>%
+  arrange(-m)
+tmp_treg = tmp_df %>%
+  filter(str_detect(majorCluster, "Treg")) %>%
+  arrange(-m)
+tmp_gdt = tmp_df %>%
+  filter(str_detect(majorCluster, "γδT")) %>%
+  arrange(-m)
+tmp_nkt = tmp_df %>%
+  filter(str_detect(majorCluster, "NK")) %>%
+  arrange(-m)
+tmp_un = tmp_df %>%
+  filter(str_detect(majorCluster, "Unknown")) %>%
+  arrange(-m)
+tmp_df = rbind(tmp_cd8, tmp_cd4, tmp_treg, tmp_gdt, tmp_nkt, tmp_un)
+
+out@cluster.data %>%
+  filter(aid != "scESCC") %>%
+  mutate(majorCluster = factor(majorCluster, levels = tmp_df$majorCluster)) %>%
+  ggplot(aes(x = majorCluster, y = migr, color  = majorCluster)) +
+  geom_boxplot() +
+  geom_point() +
+  scale_color_manual(values = t_level_3_color) +
+  labs(x = NULL) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        legend.position = "none")
+```
+
+```{r}
+tmp_df %>%
+  dplyr::rename(migr = m) %>%
+  mutate(type = case_when(
+    migr > 0.5 ~ "+++",
+    migr > 0.2 & migr <= 0.5 ~ "++",
+    migr > 0.1 & migr <= 0.2 ~ "+",
+    migr <= 0.1 ~ "-"
+  )) %>%
+  DT::datatable()
+```
+
+### Not by patient
+
+```{r fig.width=8, fig.height=3}
+d4p = out@cluster.data %>%
+  filter(aid == "scESCC") %>%
+  mutate(m = migr)
+
+# sort
+tmp_cd8 = d4p %>%
+  filter(str_detect(majorCluster, "CD8")) %>%
+  arrange(-m)
+tmp_cd4 = d4p %>%
+  filter(str_detect(majorCluster, "CD4")) %>%
+  arrange(-m)
+tmp_treg = d4p %>%
+  filter(str_detect(majorCluster, "Treg")) %>%
+  arrange(-m)
+tmp_gdt = d4p %>%
+  filter(str_detect(majorCluster, "γδT")) %>%
+  arrange(-m)
+tmp_nkt = d4p %>%
+  filter(str_detect(majorCluster, "NK")) %>%
+  arrange(-m)
+tmp_un = d4p %>%
+  filter(str_detect(majorCluster, "Unknown")) %>%
+  arrange(-m)
+tmp_df = rbind(tmp_cd8, tmp_cd4, tmp_treg, tmp_gdt, tmp_nkt, tmp_un)
+
+d4p %>%
+  mutate(majorCluster = factor(majorCluster, levels = tmp_df$majorCluster)) %>%
+  ggplot(aes(x = majorCluster, y = m, fill = majorCluster)) +
+  geom_col() +
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_fill_manual(values = t_level_3_color) +
+  labs(x = NULL) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        legend.position = "none")
+```
+
+```{r}
+d4p %>%
+  mutate(type = case_when(
+    migr > 0.5 ~ "+++",
+    migr > 0.2 & migr <= 0.5 ~ "++",
+    migr > 0.1 & migr <= 0.2 ~ "+",
+    migr <= 0.1 ~ "-"
+  )) %>%
+  DT::datatable()
+```
+
+## migration and proliferative freq. {.tabset}
+
+### Not by patient
+
+```{r fig.width=6, fig.height=6}
+df_cellNum = metadata %>%
+  group_by(level_3) %>%
+  summarise(cellNum = log2(n())) %>%
+  dplyr::rename(majorCluster = level_3)
+
+metadata %>%
+  group_by(level_3, Phase) %>%
+  summarise(n = n()) %>%
+  mutate(freq = n/sum(n)) %>%
+  filter(Phase == "G2M") %>%
+  dplyr::rename(majorCluster = level_3) %>%
+  left_join(out@cluster.data %>%
+              filter(aid == "scESCC"), by = "majorCluster") %>%
+  left_join(df_cellNum) %>%
+  ggplot(aes(x = freq, y = migr, color = majorCluster, size = cellNum)) +
+  geom_point() +
+  scale_color_manual(values = t_level_3_color) +
+  geom_text_repel(aes(label = majorCluster), max.overlaps = 20) +
+  labs(x = "Freq. of prolif.", size = "log2(cellNum)") +
+  guides(color = FALSE) +
+  theme(legend.position = "top")
+```
+
+### by patient
+
+```{r fig.width=6, fig.height=6}
+df_cellNum = metadata %>%
+  group_by(level_3) %>%
+  summarise(cellNum = log2(n())) %>%
+  dplyr::rename(majorCluster = level_3)
+
+dat_migr = out@cluster.data %>%
+  filter(aid != "scESCC") %>%
+  group_by(majorCluster) %>%
+  summarise(m_migr = mean(migr, na.rm = TRUE))
+
+dat_freqProlif = metadata %>%
+  group_by(Patient, level_3, Phase) %>%
+  summarise(n = n()) %>%
+  mutate(freq = n/sum(n)) %>%
+  filter(Phase == "G2M", n >= 10) %>% # at least 10 cells
+  ungroup() %>%
+  group_by(level_3) %>% #filter(level_3 == "CD8-C12-Tex")
+  summarise(m_freq = mean(freq)) %>%
+  dplyr::rename(majorCluster = level_3)
+
+dat_migr %>%
+  left_join(dat_freqProlif) %>%
+  left_join(df_cellNum) %>%
+  ggplot(aes(x = m_freq, y = m_migr, color = majorCluster, size = cellNum)) +
+  geom_point() +
+  scale_color_manual(values = t_level_3_color) +
+  geom_text_repel(aes(label = majorCluster), max.overlaps = 20) +
+  labs(x = "Freq. of prolif.", size = "log2(cellNum)") +
+  guides(color = FALSE) +
+  theme(legend.position = "top")
+```
+
+## pairwise migration {.tabset}
+
+### Not by patient
+
+```{r fig.width=8, fig.height=20}
+plot(out, index.type="pairwise.migr", byPatient=F)
+```
+
+heatmap
+
+```{r fig.width=8, fig.height=8}
+dat.plot = out@pIndex.migr %>%
+  filter(aid == "scESCC") %>%
+  dplyr::select(-aid) %>%
+  column_to_rownames("majorCluster") %>%
+  as.matrix()
+yrange = pretty(dat.plot)
+col_fun = circlize::colorRamp2(seq(0, max(yrange), length=50),
+                               colorRampPalette(rev(brewer.pal(n=7,name="RdBu")))(50),
+                               space = "LAB")
+
+Heatmap(dat.plot, col = col_fun, name = "pIndex.migr")
+```
+
+CD8/CD4
+
+```{r fig.width=7, fig.height=4}
+dat.plot.cd4 = out@pIndex.migr %>%
+  filter(aid == "scESCC", str_detect(majorCluster, "CD4")) %>%
+  dplyr::select(-aid) %>%
+  column_to_rownames("majorCluster") %>%
+  as.matrix()
+dat.plot.cd4[is.na(dat.plot.cd4)] <- 0
+
+dat.plot.cd8 = out@pIndex.migr %>%
+  filter(aid == "scESCC", str_detect(majorCluster, "CD8")) %>%
+  dplyr::select(-aid) %>%
+  column_to_rownames("majorCluster") %>%
+  as.matrix()
+dat.plot.cd8[is.na(dat.plot.cd8)] <- 0
+
+common_min = min(c(dat.plot.cd4, dat.plot.cd8))
+common_max = max(c(dat.plot.cd4, dat.plot.cd8))
+col_fun = circlize::colorRamp2(seq(common_min, common_max, length=50),
+                               colorRampPalette(rev(brewer.pal(n=7, name="RdBu")))(50),
+                               space = "LAB")
+Heatmap(dat.plot.cd8, col = col_fun, name = "pIndex.migr")
+Heatmap(dat.plot.cd4, col = col_fun, name = "pIndex.migr")
+```
+
+## transition {.tabset}
+
+### by patient
+
+sort by mean
+
+```{r fig.width=8, fig.height=3}
+tmp_df = out@cluster.data %>%
+  filter(aid != "scESCC") %>%
+  group_by(majorCluster) %>%
+  summarise(m = mean(tran, na.rm=TRUE))
+
+# sort
+tmp_cd8 = tmp_df %>%
+  filter(str_detect(majorCluster, "CD8")) %>%
+  arrange(-m)
+tmp_cd4 = tmp_df %>%
+  filter(str_detect(majorCluster, "CD4")) %>%
+  arrange(-m)
+tmp_treg = tmp_df %>%
+  filter(str_detect(majorCluster, "Treg")) %>%
+  arrange(-m)
+tmp_gdt = tmp_df %>%
+  filter(str_detect(majorCluster, "γδT")) %>%
+  arrange(-m)
+tmp_nkt = tmp_df %>%
+  filter(str_detect(majorCluster, "NK")) %>%
+  arrange(-m)
+tmp_un = tmp_df %>%
+  filter(str_detect(majorCluster, "Unknown")) %>%
+  arrange(-m)
+tmp_df = rbind(tmp_cd8, tmp_cd4, tmp_treg, tmp_gdt, tmp_nkt, tmp_un)
+
+out@cluster.data %>%
+  filter(aid != "scESCC") %>%
+  mutate(majorCluster = factor(majorCluster, levels = tmp_df$majorCluster)) %>%
+  ggplot(aes(x = majorCluster, y = tran, color  = majorCluster)) +
+  geom_boxplot() +
+  geom_point() +
+  scale_color_manual(values = t_level_3_color) +
+  labs(x = NULL) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        legend.position = "none")
+```
+
+```{r}
+tmp_df %>%
+  dplyr::rename(tran = m) %>%
+  mutate(type = case_when(
+    tran > 0.2 ~ "+++",
+    tran > 0.1 & tran <= 0.2 ~ "++",
+    tran > 0.05 & tran <= 0.1 ~ "+",
+    tran <= 0.05 ~ "-"
+  )) %>%
+  DT::datatable()
+```
+
+### Not by patient
+
+```{r fig.width=8, fig.height=3}
+d4p = out@cluster.data %>%
+  filter(aid == "scESCC") %>%
+  mutate(m = tran)
+
+# sort
+tmp_cd8 = d4p %>%
+  filter(str_detect(majorCluster, "CD8")) %>%
+  arrange(-m)
+tmp_cd4 = d4p %>%
+  filter(str_detect(majorCluster, "CD4")) %>%
+  arrange(-m)
+tmp_treg = d4p %>%
+  filter(str_detect(majorCluster, "Treg")) %>%
+  arrange(-m)
+tmp_gdt = d4p %>%
+  filter(str_detect(majorCluster, "γδT")) %>%
+  arrange(-m)
+tmp_nkt = d4p %>%
+  filter(str_detect(majorCluster, "NK")) %>%
+  arrange(-m)
+tmp_un = d4p %>%
+  filter(str_detect(majorCluster, "Unknown")) %>%
+  arrange(-m)
+tmp_df = rbind(tmp_cd8, tmp_cd4, tmp_treg, tmp_gdt, tmp_nkt, tmp_un)
+
+d4p %>%
+  mutate(majorCluster = factor(majorCluster, levels = tmp_df$majorCluster)) %>%
+  ggplot(aes(x = majorCluster, y = m, fill = majorCluster)) +
+  geom_col() +
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_fill_manual(values = t_level_3_color) +
+  labs(x = NULL) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1),
+        legend.position = "none")
+```
+
+```{r}
+d4p %>%
+  mutate(type = case_when(
+    tran > 0.2 ~ "+++",
+    tran > 0.1 & tran <= 0.2 ~ "++",
+    tran > 0.05 & tran <= 0.1 ~ "+",
+    tran <= 0.05 ~ "-"
+  )) %>%
+  DT::datatable()
+```
+
+## pairwise transition {.tabset}
+
+### Not by patient
+
+```{r fig.width=8, fig.height=8}
+plot(out, index.type="pairwise.tran", byPatient=T)
+```
+
+CD8/CD4
+
+```{r fig.width=5, fig.height=4}
+dat.plot.cd4 = out@pIndex.tran %>%
+  filter(aid == "scESCC", str_detect(majorCluster, "CD4")) %>%
+  dplyr::select(starts_with("CD4"), majorCluster) %>%
+  column_to_rownames("majorCluster") %>%
+  as.matrix()
+dat.plot.cd4[is.na(dat.plot.cd4)] <- 0
+
+dat.plot.cd8 = out@pIndex.tran %>%
+  filter(aid == "scESCC", str_detect(majorCluster, "CD8")) %>%
+  dplyr::select(starts_with("CD8"), majorCluster) %>%
+  column_to_rownames("majorCluster") %>%
+  as.matrix()
+dat.plot.cd8[is.na(dat.plot.cd8)] <- 0
+
+common_min = min(c(dat.plot.cd4, dat.plot.cd8))
+common_max = max(c(dat.plot.cd4, dat.plot.cd8))
+col_fun = circlize::colorRamp2(seq(common_min, common_max, length=50),
+                               colorRampPalette(rev(brewer.pal(n=7,name="RdBu")))(50),
+                               space = "LAB")
+Heatmap(dat.plot.cd8, col = col_fun, name = "pIndex.tran")
+Heatmap(dat.plot.cd4, col = col_fun, name = "pIndex.tran")
+```
+
+## Save
+
+```{r save, eval=FALSE}
+saveRDS(out, file = here::here("output", DOCNAME, "STARTRAC.out.rds"))
+```
+
+## Session
+

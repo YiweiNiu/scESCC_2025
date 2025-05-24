@@ -1,0 +1,182 @@
+---
+title: "CellChat.tissueCompare.cellType3"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME = "CellChat.tissueCompare.cellType3"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+    if (before) {
+        print(paste("Start:", Sys.time()))
+        NOW <<- Sys.time()
+    } else {
+        print(paste("Stop:", Sys.time()))
+        print(Sys.time() - NOW)
+    }
+})
+
+knitr::opts_chunk$set(
+    autodep        = TRUE,
+    cache          = FALSE,
+    cache.path     = paste0("cache/", DOCNAME, "/"),
+    cache.lazy     = FALSE, 
+    cache.comments = FALSE,
+    echo           = TRUE,
+    error          = FALSE,
+    fig.align      = "center",
+    fig.width      = 10,
+    fig.height     = 8,
+    message        = FALSE,
+    warning        = FALSE,
+    timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(ggplotify)
+library(ggcorrplot)
+library(ggpubr)
+
+# patch
+library(patchwork)
+library(cowplot)
+my_theme <- theme_cowplot(font_size=8) +
+  theme(line = element_line(colour="black", lineend="round"),
+        text = element_text(size=6, colour="black"),
+        plot.title = element_text(size=6),
+        axis.text = element_text(colour="black"),
+        axis.title = element_text(size = 6, colour = "black"),
+        axis.ticks = element_line(colour="black"),
+        axis.ticks.length = unit(.1, "cm"),
+        strip.background = element_blank(),
+        axis.text.x=element_text(angle=45, hjust=1))
+geom.text.size = 6/(14/5)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+
+# fonts
+library(extrafont)
+#font_import()
+#font_import(paths = "/T02Data/niuyw/.local/share/fonts")
+loadfonts(device = "pdf", quiet = TRUE)
+
+# color
+library(ggsci)
+
+# cellchat
+library(CellChat)
+library(NMF)
+library(ggalluvial)
+
+# Seurat
+library(Seurat)
+
+options(stringsAsFactors = FALSE)
+```
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+Load cellchat rds
+
+```{r load-rds, cache=FALSE}
+cellchat = readRDS(here::here("output", DOCNAME, "cellchat.rds"))
+cellchat
+obj.lst = readRDS(here::here("output", DOCNAME, "cellchat.obj.lst.rds"))
+origin2_n = c("PBMC1", "PBMC2", "LN_N", "LN_P", "Normal", "Adjacent", "Tumor")
+```
+
+## Create CellChat obj
+
+```{r merge-rds, cache=FALSE, message=FALSE, warning=FALSE, eval=FALSE}
+metadata = read_csv(here::here("output/04.rm_cells/seurat.cellmeta.csv"))
+group.new = unique(metadata$cellType3)
+origin2_n = c("PBMC1", "PBMC2", "LN_N", "LN_P", "Normal", "Adjacent", "Tumor")
+obj.lst = lapply(origin2_n, function(x){
+  a = readRDS(here::here(paste0("output/CellChat.byOrigin2.", paste0(x, ".cellType3/cellchat.rds"))))
+  liftCellChat(a, group.new = group.new)
+})
+names(obj.lst) = origin2_n
+cellchat <- mergeCellChat(obj.lst, add.names = origin2_n)
+cellchat
+saveRDS(cellchat, file = here::here("output", DOCNAME, "cellchat.rds"))
+saveRDS(obj.lst, file = here::here("output", DOCNAME, "cellchat.obj.lst.rds"))
+```
+
+## Total number of interactions and interaction strength
+
+To answer on question on whether the cell-cell communication is enhanced or not, CellChat compares the the total number of interactions and interaction strength of the inferred cell-cell communication networks from different biological conditions.
+
+```{r cmp-total-number-interactions-and-strength, fig.width=8, fig.height=4}
+gg1 <- compareInteractions(cellchat, show.legend = F)
+gg2 <- compareInteractions(cellchat, show.legend = F, measure = "weight")
+gg1 + gg2
+```
+
+## Differential (Heatmap) {.tabset}
+
+We can also show differential number of interactions or interaction strength in a greater details using a heatmap. The top colored bar plot represents the sum of column of values displayed in the heatmap (incoming signaling). The right colored bar plot represents the sum of row of values (outgoing signaling). In the colorbar, red (or blue) represents increased (or decreased) signaling in the second dataset compared to the first one.
+
+### PBMC1 & PBMC2
+
+```{r diff-Heatmap-PBMC1-PBMC2, fig.width=20, fig.height=20}
+gg1 <- netVisual_heatmap(cellchat, comparison = c(1, 2), font.size = 8)
+gg2 <- netVisual_heatmap(cellchat, measure = "weight", comparison = c(1, 2))
+gg1
+gg2
+```
+
+### LN_N & LN_P
+
+```{r diff-Heatmap-LN_N-LN_P, fig.width=20, fig.height=20}
+gg1 <- netVisual_heatmap(cellchat, comparison = c(3, 4))
+gg2 <- netVisual_heatmap(cellchat, measure = "weight", comparison = c(3, 4))
+gg1
+gg2
+```
+
+### Normal & Tumor
+
+```{r diff-Heatmap-Normal-Tumor, fig.width=20, fig.height=20}
+gg1 <- netVisual_heatmap(cellchat, comparison = c(5, 7))
+gg2 <- netVisual_heatmap(cellchat, measure = "weight", comparison = c(5, 7))
+gg1
+gg2
+```
+
+## Compare the major sources and targets in 2D space
+
+Comparing the outgoing and incoming interaction strength in 2D space allows ready identification of the cell populations with significant changes in sending or receiving signals between different datasets.
+
+```{r cmp-major-sour-target-in-2D, fig.width=12, fig.height=22, message=FALSE, warning=FALSE}
+num.link <- sapply(obj.lst, function(x) {rowSums(x@net$count) + colSums(x@net$count)-diag(x@net$count)})
+weight.MinMax <- c(min(num.link), max(num.link)) # control the dot size in the different datasets
+gg <- list()
+for (i in 1:length(obj.lst)) {
+  gg[[i]] <- netAnalysis_signalingRole_scatter(obj.lst[[i]], title = names(obj.lst)[i], weight.MinMax = weight.MinMax)
+}
+#> Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+#> Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+patchwork::wrap_plots(plots = gg, ncol = 2)
+```
+
+
+## Session info
+

@@ -1,0 +1,128 @@
+---
+title: "vdj.tcr.rep_ov.cd8_tex"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME = "vdj.tcr.rep_ov.cd4_cd8"
+#dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+    if (before) {
+        print(paste("Start:", Sys.time()))
+        NOW <<- Sys.time()
+    } else {
+        print(paste("Stop:", Sys.time()))
+        print(Sys.time() - NOW)
+    }
+})
+
+knitr::opts_chunk$set(
+    autodep        = TRUE,
+    cache          = FALSE,
+    cache.lazy     = FALSE, 
+    cache.comments = FALSE,
+    echo           = TRUE,
+    error          = FALSE,
+    fig.align      = "center",
+    fig.width      = 10,
+    fig.height     = 8,
+    message        = FALSE,
+    warning        = FALSE,
+    timeit         = TRUE
+)
+```
+
+Load packages
+
+```{r libaries, cache = FALSE, warning=FALSE, message=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+
+# patch
+library(patchwork)
+library(cowplot)
+my_theme <- theme_cowplot(font_size=8) +
+  theme(panel.background=element_rect(fill="white"),
+        line = element_line(colour="black", lineend="round"),
+        text = element_text(size=6, colour="black"),
+        plot.title = element_text(size=6),
+        axis.text = element_text(colour="black"),
+        axis.title = element_text(size = 6, colour = "black"),
+        axis.ticks = element_line(colour="black"),
+        axis.ticks.length = unit(.1,"cm"),
+        strip.background = element_blank(),
+        axis.text.x=element_text(angle=45, hjust=1))
+geom.text.size = 6/(14/5)
+```
+
+```{r source, cache = FALSE, message=FALSE, warning=FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+devtools::load_all('/T02Data/niuyw1/Rscir')
+```
+
+分析 TCR 的 clonotype sharing
+
+参考：Yost, K. E., Satpathy, A. T., Wells, D. K., Qi, Y., Wang, C., Kageyama, R., McNamara, K. L., Granja, J. M., Sarin, K. Y., Brown, R. A., Gupta, R. K., Curtis, C., Bucktrout, S. L., Davis, M. M., Chang, A. L. S., & Chang, H. Y. (2019). Clonal replacement of tumor-specific T cells following PD-1 blockade. Nature Medicine, 25(8), 1251–1259. https://doi.org/10.1038/s41591-019-0522-3
+
+
+## Set up
+
+Load data
+
+```{r load-data, cache=FALSE, message=FALSE, warning=FALSE}
+metadata = read_csv(here::here("output", "04.rm_cells", "seurat_tcells.cellmeta.csv")) %>%
+  filter(level_1 %in% c("CD4", "CD8", "Treg"))
+clones = read_csv('/niuyw-usb-disk/Projects/scESCA/cellranger/TCR/200121_6samples.clonotype_tcr.csv')
+```
+
+Merge metadata with clonotype
+
+```{r merge-meta-clonotypes}
+clones = clones %>%
+  filter(clonotype != 'None') %>%  # cells with alpha-beta pair
+  mutate(clonotype_size = as.numeric(clonotype_size)) %>%
+  mutate(clonal_expansion = case_when(
+    clonotype_size == 1 ~ 'No',
+    TRUE ~ 'Clonal'
+  ))
+
+d_4_p = metadata %>%
+  left_join(clones, by = 'barcode') %>%
+  filter(!is.na(clonotype))
+
+head(d_4_p)
+```
+
+## C11-Tex among different tissues
+
+CD8-C11-Tex
+
+```{r C11-Tex, fig.width=5, fig.height=5}
+df = d_4_p %>% filter(level_3 == "CD8-C11-Tex")
+PlotRepOverlap(RepOverlap(df, "Origin4"))
+PlotRepOverlap(RepOverlap(df, "Origin4", fraction = F), fraction = F)
+```
+
+## Several Tex
+
+```{r ov-Tex, fig.width=4, fig.height=4}
+df = d_4_p %>% filter(level_1 == "CD8", level_2 == "Tex")
+PlotRepOverlap(RepOverlap(df, "level_3"))
+PlotRepOverlap(RepOverlap(df, "level_3", fraction = F), fraction = F)
+```
+
+## Session info
+

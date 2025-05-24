@@ -1,0 +1,205 @@
+---
+title: "00.Fig.RORC_RORA.pySCENIC"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "00.Fig.RORC_RORA.pySCENIC"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = TRUE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+library(corrplot)
+library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+library(UpSetR)
+
+# patch
+library(patchwork)
+library(cowplot)
+my_theme <- theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+)
+geom.text.size <- 6 / (14 / 5)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+
+# color
+library(ggsci)
+
+# Seurat
+library(Seurat)
+```
+
+Load code
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Get TF activity
+
+```{r message=FALSE, warning=FALSE, eval=FALSE}
+# get mean TF activity of cellType3
+get_tf_activity <- function(cell = NULL, level = NULL) {
+  aucell_res_path <- "~/project/scESCA/pySCENIC/200227_6samples"
+  aucell_tf <- read_csv(file.path(aucell_res_path, paste0(paste0("seurat_", cell), ".TF.auc_mtx.csv"))) %>%
+    mutate(Regulon = str_replace(Regulon, "[(][+][)]", "")) %>%
+    filter(Regulon == "RORC") %>%
+    column_to_rownames(var = "Regulon") %>%
+    t() %>%
+    as.data.frame() %>%
+    rownames_to_column("barcode")
+  meta <- read_csv(here::here("output/04.rm_cells", paste0(paste0("seurat_", cell), ".cellmeta.csv"))) %>%
+    dplyr::select(barcode, cellType3 = !!sym(level))
+  aucell_tf %>%
+    left_join(meta, by = "barcode") %>%
+    group_by(cellType3) %>%
+    summarise(SOX4_TF = mean(SOX4))
+}
+
+# cells
+df_tf_lst <- list(
+  cd4 = get_tf_activity(cell = "cd4.random1", level = "level_3"),
+  cd8 = get_tf_activity(cell = "cd8.random1", level = "level_3"),
+  endo = get_tf_activity(cell = "endothelia", level = "level_2"),
+  fib = get_tf_activity(cell = "fibroblasts", level = "level_3"),
+  mye = get_tf_activity(cell = "myeloid", level = "level_3"),
+  treg = get_tf_activity(cell = "treg", level = "level_3")
+)
+
+# combine all cells
+df_tf = do.call(rbind, df_tf_lst)
+saveRDS(df_tf, file = here::here("output", DOCNAME, "df.SOX4_tf.rds"))
+df_tf %>%
+  write_tsv(file = here::here("output", DOCNAME, "df.SOX4_tf.tsv"))
+```
+
+```{r}
+df_tf <- readRDS(here::here("output", DOCNAME, "df.SOX4_tf.rds"))
+```
+
+
+
+
+
+
+
+```{r}
+cell <- "cd4.random1"
+level <- "level_3"
+
+aucell_res_path <- "/work/home/project/scESCA/pySCENIC/200227_6samples"
+aucell_tf <- read_csv(file.path(aucell_res_path, paste0(paste0("seurat_", cell), ".TF.auc_mtx.csv"))) %>%
+  mutate(Regulon = str_replace(Regulon, "[(][+][)]", "")) %>%
+  filter(Regulon == "RORC") %>%
+  column_to_rownames(var = "Regulon") %>%
+  t() %>%
+  as.data.frame() %>%
+  rownames_to_column("barcode")
+meta <- read_csv(here::here("output/04.rm_cells", paste0(paste0("seurat_", cell), ".cellmeta.csv"))) %>%
+  dplyr::select(barcode, cellType3 = !!sym(level))
+aucell_tf %>%
+  left_join(meta, by = "barcode") %>%
+  group_by(cellType3) %>%
+  summarise(SOX4_TF = mean(SOX4))
+```
+
+
+
+```{r}
+get_tf_activity <- function(srat_obj = NULL, pyscenic_prefix=NULL, goi = NULL){
+  aucell_res_path <- "/work/home/project/scESCA/pySCENIC/200227_6samples"
+aucell_tf <- read_csv(file.path(aucell_res_path, paste0(paste0("seurat_", pyscenic_prefix), ".TF.auc_mtx.csv"))) %>%
+  mutate(Regulon = str_replace(Regulon, "[(][+][)]", "")) %>%
+  filter(Regulon == goi) %>%
+  column_to_rownames(var = "Regulon") %>%
+  t() %>%
+  as.data.frame() %>%
+  rownames_to_column("barcode") %>% 
+  dplyr::rename(goi_TF = !!sym(goi))
+
+srat_obj@meta.data <- srat_obj@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  left_join(aucell_tf, by = "barcode") %>% 
+  mutate(goi_TF = replace_na(goi_TF, -100)) %>% 
+  column_to_rownames("barcode")
+# subset
+srat_obj <- subset(srat_obj, subset = goi_TF != -100)
+return(srat_obj)
+}
+```
+
+
+```{r}
+srat <- get_tf_activity(srat_obj = srat_dc, pyscenic_prefix = "myeloid", goi = "RORC")
+```
+
+
+
+
+
+
+
+

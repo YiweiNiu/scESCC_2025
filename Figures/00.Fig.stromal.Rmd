@@ -1,0 +1,224 @@
+---
+title: "00.Fig.stromal"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "00.Fig.stromal"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = FALSE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+
+# patch
+library(patchwork)
+library(cowplot)
+theme_set(theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+))
+my_theme <- theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+)
+geom.text.size <- 6 / (14 / 5)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+
+# color
+library(ggsci)
+
+# pvclust
+library(pvclust)
+library(dendextend)
+
+# Seurat
+library(Seurat)
+
+# monocle
+library(monocle)
+```
+
+Load code
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+## Roe Origin4
+
+```{r fig.width=2, fig.height=3.6, warning=FALSE}
+p.roe.endo_fib = readRDS(here::here("output", "freq.enrichment_cellType3", "p.roe.endo_fib.rds"))
+p.roe.endo_fib
+
+ggsave2(p.roe.endo_fib, filename = here::here("output", DOCNAME, "Fig.roe_fib_endo.pdf"),
+        height = 3.6, width = 2)
+```
+
+
+## GO-BP and KEGG of cmp subtypes
+
+Get data
+
+```{r}
+ck <- read.table(here::here('output', "06.endothelia.cmp_pcv", 'deg.cmp_tn_pcv.KEGG.txt'), sep = "\t", header = T)
+d4p.cmp_pcv <- ck %>% 
+  filter(Description %in% c("Cytokine-cytokine receptor interaction",
+                            "MAPK signaling pathway")) %>% 
+  mutate(Cluster = case_when(
+    Cluster == "T.up" ~ "C1C2C3",
+    Cluster == "N.up" ~ "C5"
+  )) %>% 
+  rowwise %>% 
+  mutate(ratio = eval(rlang::parse_expr(GeneRatio)))
+
+cg.BP = read.table(here::here('output', "06.endothelia.cmp_lymphatic", 'deg.cmp_tn_lymphatics.GO-BP.txt'), sep = "\t", header = T)
+d4p.cmp_lymphatic <- cg.BP %>% 
+  filter(Description %in% c("aging", "translational initiation")) %>% 
+  mutate(Cluster = case_when(
+    Cluster == "T.up" ~ "LEC-C2",
+    Cluster == "N.up" ~ "LEC-C1"
+  )) %>%
+  rowwise %>% 
+  mutate(ratio = eval(rlang::parse_expr(GeneRatio)))
+
+cg.BP = read.table(here::here('output', "06.fib.cmp_pericyte_C3_C1C2", 'deg.cmp_pericyte_C3_C1C2.GO-BP.txt'), sep = "\t", header = T)
+d4p.cmp_pericyte_C3_C1C2 <- cg.BP %>% 
+  filter(Description %in% c("extracellular matrix organization",
+                            "extracellular structure organization",
+                            "collagen metabolic process")) %>% 
+  rowwise %>% 
+  mutate(ratio = eval(rlang::parse_expr(GeneRatio)))
+
+
+cg.BP = read.table(here::here('output', "06.fib.cmp_iCAF_C3_C1C2", 'deg.cmp_iCAF_C3_C1C2.GO-BP.txt'), sep = "\t", header = T)
+d4p.cmp_iCAF_C3_C1C2 <- cg.BP %>% 
+  filter(Description %in% c("extracellular matrix organization",
+                            "extracellular structure organization")) %>% 
+  rowwise %>% 
+  mutate(ratio = eval(rlang::parse_expr(GeneRatio)))
+
+range(c(d4p.cmp_pcv$ratio, d4p.cmp_lymphatic$ratio, d4p.cmp_pericyte_C3_C1C2$ratio, d4p.cmp_iCAF_C3_C1C2$ratio))
+```
+
+### pcv-C1C2C3_vs_pcv-C5
+
+```{r fig.width=2.5, fig.height=2}
+ggplot(data = d4p.cmp_pcv, aes(x = Cluster, y = Description)) +
+  geom_point(aes(size = ratio, color = p.adjust)) +
+  scale_color_continuous(high = "#e06663", low = "#327eba") +
+  scale_size(limits = c(0.065, 0.175)) +
+  labs(x = NULL, y = NULL) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.cmp_pcv-C1C2C3_vs_pcv-C5.KEGG.pdf"),
+  width = 2.5, height = 2, device = cairo_pdf
+)
+```
+
+### LEC-C2_vs_LEC-C1
+
+```{r fig.width=2.5, fig.height=2}
+ggplot(data = d4p.cmp_lymphatic, aes(x = Cluster, y = Description)) +
+  geom_point(aes(size = ratio, color = p.adjust)) +
+  scale_color_continuous(high = "#e06663", low = "#327eba") +
+  scale_size(limits = c(0.065, 0.175)) +
+  labs(x = NULL, y = NULL) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.cmp_LEC-C2_vs_LEC-C1.GO-BP.pdf"),
+  width = 2.5, height = 2, device = cairo_pdf
+)
+```
+
+
+### pericyte-C3 vs pericyte-C1C2
+
+```{r fig.width=2.5, fig.height=2}
+ggplot(data = d4p.cmp_pericyte_C3_C1C2, aes(x = Cluster, y = Description)) +
+  geom_point(aes(size = ratio, color = p.adjust)) +
+  scale_color_continuous(high = "#e06663", low = "#327eba") +
+  scale_size(limits = c(0.065, 0.175)) +
+  labs(x = NULL, y = NULL) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.cmp_pericyte-C3_vs_pericyte-C1C2.GO-BP.pdf"),
+  width = 2.5, height = 2, device = cairo_pdf
+)
+```
+
+### iCAF-C3_vs_iCAF-C1C2
+
+```{r fig.width=2.5, fig.height=2}
+ggplot(data = d4p.cmp_iCAF_C3_C1C2, aes(x = Cluster, y = Description)) +
+  geom_point(aes(size = ratio, color = p.adjust)) +
+  scale_color_continuous(high = "#e06663", low = "#327eba") +
+  scale_size(limits = c(0.065, 0.175)) +
+  labs(x = NULL, y = NULL) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.cmp_iCAF-C3_vs_iCAF-C1C2.GO-BP.pdf"),
+  width = 2.5, height = 2, device = cairo_pdf
+)
+```
+
+## Session info

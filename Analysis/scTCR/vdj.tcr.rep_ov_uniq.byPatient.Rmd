@@ -1,0 +1,213 @@
+---
+title: "vdj.tcr.rep_ov_uniq.byPatient"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME = "vdj.tcr.rep_ov_uniq.byPatient"
+#dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+    if (before) {
+        print(paste("Start:", Sys.time()))
+        NOW <<- Sys.time()
+    } else {
+        print(paste("Stop:", Sys.time()))
+        print(Sys.time() - NOW)
+    }
+})
+
+knitr::opts_chunk$set(
+    autodep        = TRUE,
+    cache          = FALSE,
+    cache.lazy     = FALSE, 
+    cache.comments = FALSE,
+    echo           = TRUE,
+    error          = FALSE,
+    fig.align      = "center",
+    fig.width      = 10,
+    fig.height     = 8,
+    message        = FALSE,
+    warning        = FALSE,
+    timeit         = TRUE
+)
+```
+
+Load packages
+
+```{r libaries, cache = FALSE, warning=FALSE, message=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(igraph)
+library(ggplotify)
+library(ggcorrplot)
+library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+
+# patch
+library(patchwork)
+library(cowplot)
+my_theme <- theme_cowplot(font_size=8) +
+  theme(panel.background=element_rect(fill="white"),
+        line = element_line(colour="black", lineend="round"),
+        text = element_text(size=6, colour="black"),
+        plot.title = element_text(size=6),
+        axis.text = element_text(colour="black"),
+        axis.title = element_text(size = 6, colour = "black"),
+        axis.ticks = element_line(colour="black"),
+        axis.ticks.length = unit(.1,"cm"),
+        strip.background = element_blank(),
+        axis.text.x=element_text(angle=45, hjust=1))
+geom.text.size = 6/(14/5)
+```
+
+```{r source, cache = FALSE, message=FALSE, warning=FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+devtools::load_all('/T02Data/niuyw1/Rscir')
+```
+
+分析每个病人中，不同样本之间 unique shared clonotypes
+
+
+## Set up
+
+Load data
+
+```{r load-data, cache=FALSE, message=FALSE, warning=FALSE}
+metadata = read_csv(here::here("output", "04.rm_cells", "seurat_tcells.cellmeta.csv"))
+clones = read_csv('/niuyw-usb-disk/Projects/scESCA/cellranger/TCR/200121_6samples.clonotype_tcr.csv')
+```
+
+Merge metadata with clonotype
+
+```{r merge-meta-clonotypes}
+clones = clones %>%
+  filter(clonotype != 'None') %>%  # cells with alpha-beta pair
+  mutate(clonotype_size = as.numeric(clonotype_size)) %>%
+  mutate(clonal_expansion = case_when(
+    clonotype_size == 1 ~ 'No',
+    TRUE ~ 'Clonal'
+  ))
+
+d_4_p = metadata %>%
+  left_join(clones, by = 'barcode') %>%
+  filter(!is.na(clonotype))
+
+head(d_4_p)
+```
+
+## Heatmap {.tabset}
+
+By patient
+
+```{r , results = "hide"}
+tmp = unique(d_4_p$Patient)
+src_list <- lapply(tmp, function(s){
+    src <- c(
+        "### {{s}} {.tabset}",
+        "",
+        "```{r  fig.height=8, fig.width=8}",
+        "tmp = d_4_p %>% filter(Patient == '{{s}}') %>% group_by(clonotype, Origin) %>%",
+        "summarise(n = n()) %>% mutate(n = n_distinct(clonotype, Origin)) %>%",
+        "dplyr::select(clonotype, n) %>%  mutate(shared_by2 = ifelse(n == 2, 'Yes', 'No')) %>%",
+        "dplyr::select(clonotype, shared_by2)",
+        "df = d_4_p %>% filter(Patient == '{{s}}') %>% left_join(tmp, by = 'clonotype') %>% filter(shared_by2 == 'Yes')",
+        "ov = RepOverlap(df, 'Origin', fraction = FALSE)",
+        "PlotRepOverlap(ov, fraction = FALSE, title = '{{s}}')",
+        "```",
+        "CD8",
+        "```{r  fig.height=8, fig.width=8}",
+        "tmp = d_4_p %>% filter(Patient == '{{s}}', level_1=='CD8') %>% group_by(clonotype, Origin) %>%",
+        "summarise(n = n()) %>% mutate(n = n_distinct(clonotype, Origin)) %>%",
+        "dplyr::select(clonotype, n) %>%  mutate(shared_by2 = ifelse(n == 2, 'Yes', 'No')) %>%",
+        "dplyr::select(clonotype, shared_by2)",
+        "df = d_4_p %>% filter(Patient == '{{s}}', level_1=='CD8') %>% left_join(tmp, by = 'clonotype') %>% filter(shared_by2 == 'Yes')",
+        "ov = RepOverlap(df, 'Origin', fraction = FALSE)",
+        "PlotRepOverlap(ov, fraction = FALSE, title = '{{s}}')",
+        "```",
+        "",
+        "CD4",
+         "```{r  fig.height=8, fig.width=8}",
+        "tmp = d_4_p %>% filter(Patient == '{{s}}', level_1=='CD4') %>% group_by(clonotype, Origin) %>%",
+        "summarise(n = n()) %>% mutate(n = n_distinct(clonotype, Origin)) %>%",
+        "dplyr::select(clonotype, n) %>%  mutate(shared_by2 = ifelse(n == 2, 'Yes', 'No')) %>%",
+        "dplyr::select(clonotype, shared_by2)",
+        "df = d_4_p %>% filter(Patient == '{{s}}', level_1=='CD4') %>% left_join(tmp, by = 'clonotype') %>% filter(shared_by2 == 'Yes')",
+        "ov = RepOverlap(df, 'Origin', fraction = FALSE)",
+        "PlotRepOverlap(ov, fraction = FALSE, title = '{{s}}')",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+## Network {.tabset}
+
+By patient
+
+```{r , results = "hide"}
+tmp = unique(d_4_p$Patient)
+src_list <- lapply(tmp, function(s){
+    src <- c(
+        "### {{s}} {.tabset}",
+        "```{r  fig.height=8, fig.width=8}",
+        "tmp = d_4_p %>% filter(Patient == '{{s}}') %>% group_by(clonotype, Origin) %>%",
+        "summarise(n = n()) %>% mutate(n = n_distinct(clonotype, Origin)) %>%",
+        "dplyr::select(clonotype, n) %>%  mutate(shared_by2 = ifelse(n == 2, 'Yes', 'No')) %>%",
+        "dplyr::select(clonotype, shared_by2)",
+        "df = d_4_p %>% filter(Patient == '{{s}}') %>% left_join(tmp, by = 'clonotype') %>% filter(shared_by2 == 'Yes')",
+        "ov = RepOverlap(df, 'Origin', fraction = FALSE)",
+        "a = igraph::as_data_frame(graph_from_adjacency_matrix(ov, weighted = TRUE)) %>% filter(!is.na(weight))",
+        "net = graph_from_data_frame(a, directed = FALSE)",
+        "plot(net, edge.width=edge_attr(net)$weight)",
+        "````",
+        "",
+        "CD8",
+        "```{r  fig.height=8, fig.width=8}",
+        "tmp = d_4_p %>% filter(Patient == '{{s}}', level_1=='CD8') %>% group_by(clonotype, Origin) %>%",
+        "summarise(n = n()) %>% mutate(n = n_distinct(clonotype, Origin)) %>%",
+        "dplyr::select(clonotype, n) %>%  mutate(shared_by2 = ifelse(n == 2, 'Yes', 'No')) %>%",
+        "dplyr::select(clonotype, shared_by2)",
+        "df = d_4_p %>% filter(Patient == '{{s}}', level_1=='CD8') %>% left_join(tmp, by = 'clonotype') %>% filter(shared_by2 == 'Yes')",
+        "ov = RepOverlap(df, 'Origin', fraction = FALSE)",
+        "a = igraph::as_data_frame(graph_from_adjacency_matrix(ov, weighted = TRUE)) %>% filter(!is.na(weight))",
+        "net = graph_from_data_frame(a, directed = FALSE)",
+        "plot(net, edge.width=edge_attr(net)$weight)",
+        "```",
+        "",
+        "CD4",
+        "```{r  fig.height=8, fig.width=8}",
+        "tmp = d_4_p %>% filter(Patient == '{{s}}', level_1=='CD4') %>% group_by(clonotype, Origin) %>%",
+        "summarise(n = n()) %>% mutate(n = n_distinct(clonotype, Origin)) %>%",
+        "dplyr::select(clonotype, n) %>%  mutate(shared_by2 = ifelse(n == 2, 'Yes', 'No')) %>%",
+        "dplyr::select(clonotype, shared_by2)",
+        "df = d_4_p %>% filter(Patient == '{{s}}', level_1=='CD4') %>% left_join(tmp, by = 'clonotype') %>% filter(shared_by2 == 'Yes')",
+        "ov = RepOverlap(df, 'Origin', fraction = FALSE)",
+        "a = igraph::as_data_frame(graph_from_adjacency_matrix(ov, weighted = TRUE)) %>% filter(!is.na(weight))",
+        "net = graph_from_data_frame(a, directed = FALSE)",
+        "plot(net, edge.width=edge_attr(net)$weight)",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+## Session info

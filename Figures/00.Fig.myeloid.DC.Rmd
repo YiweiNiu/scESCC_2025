@@ -1,0 +1,736 @@
+---
+title: "00.Fig.myeloid.DC"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "00.Fig.myeloid.DC"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = FALSE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+#library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+
+# patch
+library(patchwork)
+library(cowplot)
+my_theme <- theme_cowplot(
+  font_size = 6,# Overall font size
+  rel_small = 6 / 6,# axis tick labels
+  rel_tiny = 6 / 6,# caption
+  rel_large = 6 / 6 # title
+)
+geom.text.size <- 6 / (14 / 5)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+
+# color
+library(ggsci)
+
+# Seurat
+library(Seurat)
+library(monocle3)
+```
+
+Load code
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+Load meta data
+
+```{r load-meta, message=FALSE, warning=FALSE}
+meta.data <- read_csv(here::here("output/04.rm_cells/seurat_dc.cellmeta.csv")) %>% 
+  mutate(
+    level_2 = case_when(
+      level_2 == "tDC" ~ "mregDC",
+      TRUE ~ level_2
+    ),
+    level_3 = case_when(
+      level_3 == "tDC-C3" ~ "mregDC-C3",
+      TRUE ~ level_3
+    )
+  )
+sam_info <- read_csv(here::here("data/sample_info.3.csv")) %>%
+  mutate(cell.filtered = as.numeric(cell.filtered))
+```
+
+Load rds
+
+```{r load-rds, cache=FALSE}
+srat = readRDS(here::here('output/04.rm_cells/seurat_dc.rds'))
+srat
+```
+
+Modify srat
+
+- tDC to mregDC
+- levels
+
+```{r}
+srat@meta.data <- srat@meta.data %>% 
+  rownames_to_column() %>% 
+  mutate(
+    level_2 = case_when(
+      level_2 == "tDC" ~ "mregDC",
+      TRUE ~ level_2
+    ),
+    level_3 = case_when(
+      level_3 == "tDC-C3" ~ "mregDC-C3",
+      TRUE ~ level_3
+    )
+  ) %>% 
+  mutate(
+    level_3 = factor(level_3, levels = c("cDC2-C1", "cDC2-C2", "mregDC-C3", "cDC1-C5", "cDC1-C6", "pDC-C7", "pDC-C8", "pDC-C4"))
+  ) %>% 
+  column_to_rownames()
+
+Idents(srat) <- "level_3"
+```
+
+## Freq
+
+### Fraction changes (level 2)
+
+```{r fig.width=2, fig.height=2}
+# level2
+df_fc <- meta.data %>%
+  group_by(level_2, Source) %>%
+  summarise(n = n()) %>%
+  mutate(n = as.numeric(n)) %>%
+  left_join(sam_info, "Source") %>%
+  mutate(value = (n / cell.filtered) * 100) %>%
+  dplyr::select(Origin2_n, Source, level_2, value) %>% 
+  group_by(Origin2_n, level_2) %>%
+  summarise(Percent = mean(value)) %>% 
+    mutate(
+    Origin2_n = factor(Origin2_n, levels = c(
+      "prePBMC", "postPBMC", "nLN", "pLN", "Normal", "Adjacent", "Tumor"
+    ))
+  )
+
+p.frac_change <- df_fc %>% 
+  ggplot(aes(x = Origin2_n, y = Percent, color = level_2, group = level_2)) +
+  geom_line() +
+  geom_point() +
+  scale_color_manual(values = mye_level_2_color[as.character(unique(df_fc$level_2))]) +
+  labs(x = NULL, color = NULL) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+p.frac_change
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.freq_change_DC_level2.pdf"),
+  width = 2, height = 2
+)
+```
+
+### Roe Origin2_n
+
+```{r Origin2_n-enrichment, fig.width=2.5, fig.height=2, cache=FALSE}
+cluster_cellNum = srat@meta.data %>% 
+  group_by(level_3) %>% 
+  summarise(cluster.cell_num = n()) %>%
+  mutate(cluster.cell_num = as.numeric(cluster.cell_num))
+
+origin2_CellNum = srat@misc$sam_info %>%
+  group_by(Origin2_n) %>%
+  summarise(origin.cell_num = sum(cell.filtered)) %>%
+  mutate(origin.cell_num = as.numeric(origin.cell_num)) %>%
+  mutate(total = sum(origin.cell_num)) %>%
+  mutate(total = as.numeric(total))
+
+cluster_byOrigin2 = srat@meta.data %>%
+  group_by(level_3, Origin2_n) %>% 
+  summarise(o = n()) %>%
+  mutate(o = as.numeric(o))
+
+# add origins not existing
+tmp = setdiff(levels(cluster_byOrigin2$Origin2_n), cluster_byOrigin2$Origin2_n)
+if (length(tmp) > 0) {
+  for (t in tmp) {
+    x = tibble(level_3 = levels(cluster_cellNum$level_3), Origin2_n = t, o = 0)
+    cluster_byOrigin2 = bind_rows(cluster_byOrigin2, x)
+  }
+}
+
+r_oe = cluster_byOrigin2 %>%
+  left_join(origin2_CellNum, by = 'Origin2_n') %>%
+  left_join(cluster_cellNum, by = 'level_3') %>%
+  mutate(e = (origin.cell_num * cluster.cell_num)/total) %>%
+  mutate(r = o/e) %>%
+  dplyr::select(level_3, Origin2_n, r) %>% 
+  spread(Origin2_n, r, fill = 0) %>% 
+  column_to_rownames("level_3")
+
+# change order
+r_oe = r_oe[rev(intersect(levels(srat$level_3), unique(srat$level_3))),]
+
+# use ggplot for better control
+p.roe = plot_origin2_enrich(r_oe)
+p.roe
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.Roe_DC_level3.pdf"),
+  width = 2, height = 2
+)
+```
+
+## Selected gene {.tabset}
+
+### DC functional score {.tabset}
+
+```{r fig.width=7.3, fig.height=2}
+func_markers <- list(
+  # migration
+  mig = filter_features(srat, c(
+    "CCR7", "DOCK8", "EZH1", "EZH2", "L1CAM", "CMKLR1", "CD74", "HLA-DRA",
+    "HLA-DQA1", "HLA-DRB5", "HLA-DPB1", "EPS8", "ASB2", "RAPGEF3", "RAP1A",
+    "ITPR1", "MYH2", "RHOA", "DIAPH1", "CDC42", "ACTR2", "ACTR3", "CD37", "CD82", "CD2AP"
+  )),
+  # maturation
+  mat = filter_features(srat, c(
+    "CCR7", "IKKB", "CHUK", "HLA-DRA", "HLA-DRB1", "HLA-DQA1",
+    "CD40", "CD80", "CD86", "CD83", "MYD88", "MAP3K7", "IFNA1",
+    "IFNB1", "IFNG"
+  )),
+  # steady state maturation
+  #ste = filter_features(srat, c(
+  #  "CCR7", "CCL19", "ITGB8", "LTB", "SOCS2", "RASAL1", "STAT4",
+  #  "IL4I1", "CD40", "CCL22", "USP18", "IRF1", "GBP2", "IL15RA", "RELB"
+  #)),
+  # Inflammatory DC maturation
+  #inf = filter_features(srat, c(
+  #  "CD86", "CXCL10", "IRF7", "ISG15", "IFIT1", "SOCS1", "IL12B",
+  #  "TNFIAP3", "CD40", "CCL22", "USP18", "IRF1", "GBP2", "IL15RA", "RELB"
+  #)),
+  # KEGG atigen processing and presentation
+  anti = filter_features(srat, c(
+    "HLA-DOA", "HLA-DOB", "KLRC3", "KLRD1", "KLRC1", "KLRC2", "RFXAP", "RFX5",
+    "IFNA5", "IFNA4", "IFNA2", "IFNA1", "LGMN", "PSME3", "CTSS", "HLA-C", "HLA-B",
+    "HLA-DMB", "HLA-DMA", "HLA-A", "HSPA1L", "HSPA1B", "HSPA2", "KIR2DS5", "HLA-G",
+    "KIR3DL1", "KIR3DL2", "HSPA1A", "RFXANK", "CREB1", "IFNA17", "HSPA5", "CD74",
+    "HSPA4", "IFNA21", "CTSL", "IFNA6", "IFI30", "IFNA7", "IFNA8", "IFNA10", "IFNA13",
+    "CIITA", "IFNA14", "IFNA16", "KIR2DL5A", "HSPA6", "HLA-DRB4", "CD4", "KIR2DL1",
+    "HLA-DRB5", "LTA", "KIR3DL3", "HLA-DRB3", "TAP2", "KIR2DS4", "TAPBP", "CD8A",
+    "CD8B", "TAP1", "KIR2DS3", "HSPA8", "KIR2DL4", "CANX", "KIR2DS1", "KIR2DL2",
+    "KIR2DL3", "KLRC4", "NFYC", "HSP90AA1", "NFYA", "NFYB", "HLA-F", "CTSB",
+    "HLA-E", "CALR", "HLA-DPA1", "HLA-DPB1", "HLA-DQA1", "PDIA3", "HLA-DQA2",
+    "HLA-DQB1", "PSME1", "PSME2", "HSP90AB1", "B2M", "HLA-DRB1", "HLA-DRA"
+  )),
+  # leukocyte chemotaxis
+  leu_chemotaxis = filter_features(srat, GOfuncR::get_anno_genes("GO:0030595") %>% pull(gene)),
+  # antigen processing and presentation
+  antigen_pp = filter_features(srat, GOfuncR::get_anno_genes("GO:0019882") %>% pull(gene)),
+  # leukocyte cell-cell adhesion
+  leu_adhesion = filter_features(srat, GOfuncR::get_anno_genes("GO:0007159") %>% pull(gene)),
+  # regulation of leukocyte mediated immunity
+  leu_imm = filter_features(srat, GOfuncR::get_anno_genes("GO:0002703") %>% pull(gene))
+)
+
+# col order
+col_order <- c("cDC2-C1", "cDC2-C2", "mregDC-C3", "cDC1-C5", "cDC1-C6", "pDC-C7", "pDC-C8", "pDC-C4")
+
+# order of cells
+df <- srat@meta.data %>%
+  rownames_to_column("barcode") %>%
+  droplevels() %>%
+  dplyr::select(barcode, level_3, Origin2_n) %>%
+  mutate(level_3 = factor(level_3, levels = col_order)) %>%
+  arrange(level_3, Origin2_n)
+
+# get score
+srat <- AddModuleScore(srat, features = func_markers)
+mat <- srat@meta.data %>%
+  rownames_to_column("barcode") %>%
+  dplyr::select(
+    barcode,
+    starts_with("Cluster")
+  ) %>%
+  column_to_rownames("barcode") %>%
+  t()
+mat <- mat[, df$barcode]
+rownames(mat) <- names(func_markers)
+
+# top anno
+top_ha <- HeatmapAnnotation(
+  cell = df$level_3,
+  col = list(cell = mye_level_3_color),
+  show_annotation_name = c(cell = TRUE),
+  annotation_name_gp = gpar(fontsize = 6),
+  annotation_name_side = "left",
+  annotation_legend_param = list(
+    cell = list(
+      labels_gp = gpar(fontsize = 6),
+      title_gp = gpar(fontsize = 6),
+  grid_height = unit(2, "mm"),
+  grid_width = unit(2, "mm")
+    )
+  ),
+   simple_anno_size = unit(2, "mm")
+)
+bottom_ha <- HeatmapAnnotation(
+  tissue = df$Origin2_n,
+  col = list(tissue = origin2_color_maps),
+  show_annotation_name = c(tissue = TRUE),
+  annotation_name_gp = gpar(fontsize = 6),
+  annotation_name_side = "left",
+  annotation_legend_param = list(
+    tissue = list(
+      labels_gp = gpar(fontsize = 6),
+      title_gp = gpar(fontsize = 6),
+  grid_height = unit(2, "mm"),
+  grid_width = unit(2, "mm")
+    )
+  ),
+  simple_anno_size = unit(2, "mm")
+)
+
+# col
+x <- ceiling(max(abs(mat)))
+col_fun <- circlize::colorRamp2(seq(-2, 2, length = 50), rev(colorRampPalette(brewer.pal(n = 11, name = "RdBu"))(50)))
+
+# plot
+ht = Heatmap(mat,
+  name = "Exp.",
+  col = col_fun,
+  cluster_rows = FALSE, cluster_columns = FALSE,
+  row_names_side = "left",
+  row_names_gp = gpar(fontsize = 6),
+  show_column_names = FALSE,
+  column_split = factor(
+    df$level_3,
+    levels = levels(df$level_3)
+  ),
+  column_title = NULL,
+  column_gap = unit(0, "mm"),
+  border = TRUE,
+  top_annotation = top_ha,
+  bottom_annotation = bottom_ha,
+  heatmap_legend_param = list(
+  title_position = "topcenter",
+  direction = "vertical",
+  labels_gp = gpar(fontsize = 6),
+  title_gp = gpar(fontsize = 6),
+  grid_height = unit(1.5, "mm"),
+  grid_width = unit(1.5, "mm")
+)
+)
+
+p <- plot_grid(grid.grabExpr(draw(ht)))
+p
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.score_DC_functional.pdf"),
+  width = 7.3, height = 1.5
+)
+```
+
+### Suppressive, costimulatory and TLR/adapter
+
+```{r fig.width=7.5, fig.height=4, warning=FALSE, message=FALSE}
+markers <- list(
+  Suppressive = filter_features(srat, c(
+    "CD274", # PD-L1
+    "PDCD1LG2", # PD-L2
+    "CD276", # BH-H3
+    "VTCN1", # BH-H4
+    "TNFRSF14", # HVEM
+    "LILRB4", # ILT3
+    "LILRB2", # ILT4
+    "LGALS9", "ADORA2A", "ADORA2B", "ARG1", "ICOSLG")),
+  Costimulatory = filter_features(srat, c(
+    "CD80", "CD86", "CD40", "ICOSLG", "CD70", "TNFSF4", "TNFSF18",
+    "TNFSF14", "HAVCR2", # TIM3
+    "TIMD4", "ICAM1", "CD58",
+    "TNFSF9", "PCR", "IL1B", "ALCAM", "TNF")),
+  tlr_and_adapter = filter_features(srat, c(
+    "MYD88", "TICAM1", "TLR10", "TLR9",
+    "TLR8", "TLR7", "TLR6", "TLR5",
+    "TLR4", "TLR3", "TLR2", "TLR1"
+  ))
+)
+
+# col order
+col_order <- c("cDC2-C1", "cDC2-C2", "mregDC-C3", "cDC1-C5", "cDC1-C6", "pDC-C7", "pDC-C8", "pDC-C4")
+
+# order of cells
+df <- srat@meta.data %>%
+  rownames_to_column("barcode") %>%
+  droplevels() %>%
+  dplyr::select(barcode, level_3, Origin2_n) %>%
+  mutate(level_3 = factor(level_3, levels = col_order)) %>%
+  arrange(level_3, Origin2_n)
+
+# get mat
+mat_raw <- t(FetchData(srat, vars = unlist(markers), slot = "data"))
+mat_raw <- mat_raw[, df$barcode]
+
+# col
+x <- ceiling(max(abs(mat_raw)))
+col_fun <- circlize::colorRamp2(seq(0, x, length = 50), colorRampPalette(c("white", "red"))(50))
+
+# plot
+ht = Heatmap(mat_raw,
+  name = "Exp.",
+  col = col_fun,
+  cluster_rows = FALSE, cluster_columns = FALSE,
+  show_column_names = FALSE,
+  row_names_gp = gpar(fontsize = 6, fontface = "italic"),
+  column_split = factor(
+    df$level_3,
+    levels = levels(df$level_3)
+  ),
+  row_split = factor(
+    rep(names(markers), sapply(markers, length)),
+    levels = names(markers)
+  ),
+  row_title_gp = gpar(fontsize = 6),
+  column_title = NULL,
+  column_gap = unit(0, "mm"),
+  border = TRUE,
+  top_annotation = top_ha,
+  bottom_annotation = bottom_ha,
+  heatmap_legend_param = list(
+  title_position = "topcenter",
+  direction = "vertical",
+  labels_gp = gpar(fontsize = 6),
+  title_gp = gpar(fontsize = 6),
+  grid_height = unit(1.5, "mm"),
+  grid_width = unit(1.5, "mm")
+)
+)
+
+p <- plot_grid(grid.grabExpr(draw(ht)))
+p
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.score_Suppressive_Costimulatory_TLR_adapter.pdf"),
+  width = 7.5, height = 4
+)
+```
+
+### DC activation markers
+
+From: Sathe, A., Grimes, S., Lau, B.T., Chen, J., Suarez, C., Huang, R., Poultsides, G., and Ji, H.P. (2019). Single cell genomic characterization reveals the cellular reprogramming of the gastric tumor microenvironment. BioRxiv 783027.
+
+```{r tex-chemokine, fig.height=2, fig.width=2}
+p.dc_activation <- StackedVlnPlot(srat,
+  features = c(
+    "CD83", "CCR7", "IL7R", "ID2"
+  ),
+  color.use = mye_level_3_color,
+  angle.x = 60
+)
+p.dc_activation
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.score_DC_activation_markers.pdf"),
+  width = 2, height = 2
+)
+```
+
+## Cell composition
+
+### cellType x Origin2_n/Patient
+
+```{r fig.width=5, fig.height=2}
+p1 <- srat@meta.data %>%
+  group_by(level_3, Origin4) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n / sum(n) * 100) %>%
+  ggplot(aes(x = level_3, y = Percent, fill = Origin4)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = origin4_color_maps) +
+  labs(fill = NULL) +
+  coord_flip() +
+  guides(fill = guide_legend(ncol = 1, byrow = TRUE)) +
+  scale_y_continuous(expand = c(0, 0)) +
+  my_theme
+p2 <- srat@meta.data %>%
+  group_by(level_3, Patient) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n / sum(n) * 100) %>%
+  ggplot(aes(x = level_3, y = Percent, fill = Patient)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = patient_color_maps) +
+  labs(fill = NULL) +
+  coord_flip() +
+  guides(fill = guide_legend(ncol = 1, byrow = TRUE)) +
+  scale_y_continuous(expand = c(0, 0)) +
+  my_theme +
+  theme(
+    axis.text.y = element_blank(),
+    axis.title.y = element_blank()
+  )
+p3 <- srat@meta.data %>%
+  group_by(level_3) %>%
+  summarise(n = n()) %>%
+  ggplot(aes(x = level_3, y = log2(n), fill = "blue")) +
+  geom_bar(stat = "identity", color = "#00008f") +
+  scale_fill_manual(values = "#8f8fb1") +
+  labs(fill = NULL) +
+  coord_flip() +
+  scale_y_continuous(expand = c(0, 0)) +
+  my_theme +
+  theme(
+    axis.text.y = element_blank(),
+    axis.title.y = element_blank(),
+    legend.position = "none"
+  )
+
+p.stack <- plot_grid(p1, p2, p3, ncol = 3, rel_widths = c(2.1, 1.5, 1))
+p.stack
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.cellTypeComposition.pdf"),
+  height = 2, width = 5, device = cairo_pdf
+)
+```
+
+## Monocle3
+
+### all
+
+```{r}
+cds = readRDS(here::here('output/04.rm_cells/monocle3_dc.rds'))
+cds
+```
+
+trajectory
+
+```{r fig.width=3.1, fig.height=3}
+p.monocle3_trajectory <- plot_cells(cds,
+  label_groups_by_cluster = FALSE,
+  color_cells_by = "level_3",
+  label_leaves = FALSE,
+  label_branch_points = FALSE
+) +
+  scale_color_manual(values = mye_level_3_color) +
+  my_theme +
+  theme(legend.position = "None")
+p.monocle3_trajectory
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.monocle3_trajectory.pdf"),
+  height = 3, width = 3.1, device = cairo_pdf
+)
+```
+
+### cDC2 -> tDC
+
+```{r}
+cds = readRDS(here::here('output/04.rm_cells/monocle3_cDC2_tDC.rds'))
+srat_cDC2_tDC = readRDS(here::here('output/04.rm_cells/seurat_cDC2_tDC.rds'))
+srat_cDC2_tDC
+pr_deg_ids = readRDS(here::here('output/04.rm_cells/monocle3_cDC2_tDC.pr_deg_ids.rds'))
+```
+
+Pseudotime
+
+```{r fig.width=6, fig.height=1.5}
+p1 = DimPlot(srat_cDC2_tDC, group.by = 'level_3', pt.size = .1) +
+  scale_color_manual(values = mye_level_3_color[c("cDC2-C1", "cDC2-C2", "mregDC-C3")]) +
+  labs(title = NULL) +
+  my_theme
+p2 = DimPlot(srat_cDC2_tDC, group.by = 'Origin2_n', pt.size = .1) +
+  scale_color_manual(values = origin2_color_maps) +
+  labs(title = NULL) +
+  my_theme
+
+p3 = plot_cells(cds,
+                color_cells_by = "pseudotime",
+                label_cell_groups=FALSE,
+                label_leaves=FALSE,
+                label_branch_points=FALSE,
+                cell_size = .5,
+                graph_label_size=1.5) +
+  my_theme
+
+p1 + p2 + p3
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.monocle3_pseudotime.cDC2_to_tDC.pdf"),
+  width = 6, height = 1.5
+)
+```
+
+Genes
+
+```{r fig.width=3, fig.height=4}
+pt.matrix <- exprs(cds)[match(pr_deg_ids[1:50], rownames(rowData(cds))), order(pseudotime(cds))]
+#Can also use "normalized_counts" instead of "exprs" to use various normalization methods, for example:
+#normalized_counts(cds, norm_method = "log")
+
+pt.matrix <- t(apply(pt.matrix,1,function(x){smooth.spline(x,df=3)$y}))
+pt.matrix <- t(apply(pt.matrix,1,function(x){(x-mean(x))/sd(x)}))
+rownames(pt.matrix) <- pr_deg_ids[1:50]
+
+#Ward.D2 Hierarchical Clustering
+hthc <- Heatmap(
+  pt.matrix,
+  name                         = "z-score",
+  col                          = circlize::colorRamp2(seq(from=-2,to=2,length=11), rev(brewer.pal(11, "Spectral"))),
+  show_row_names               = TRUE,
+  show_column_names            = FALSE,
+  row_names_gp                 = gpar(fontsize = 5),
+  clustering_method_rows       = "ward.D2",
+  clustering_method_columns    = "ward.D2",
+  row_title_rot                = 0,
+  cluster_rows                 = TRUE,
+  show_row_dend = FALSE,
+  cluster_row_slices           = FALSE,
+  cluster_columns              = FALSE,
+  heatmap_legend_param = list(
+  title_position = "topcenter",
+  direction = "vertical",
+  labels_gp = gpar(fontsize = 6),
+  title_gp = gpar(fontsize = 6),
+  grid_height = unit(1.5, "mm"),
+  grid_width = unit(1.5, "mm")
+))
+
+p <- plot_grid(grid.grabExpr(draw(hthc)))
+p
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.monocle3_genes.cDC2_to_tDC.pdf"),
+  width = 3, height = 4
+)
+```
+
+SOX4
+
+```{r fig.width=2, fig.height=1.8}
+FeaturePlot(srat_cDC2_tDC, features = "SOX4", pt.size = .1, order = T) +
+  labs(title = NULL) +
+  my_theme
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.monocle3_genes.cDC2_to_tDC.SOX4.pdf"),
+  width = 2, height = 1.8
+)
+```
+
+
+```{r eval=FALSE}
+#Another way to plot
+selected_genes = c("SOX4")
+selected_cds <- cds[match(selected_genes, rownames(cds)),]
+
+plot_genes_in_pseudotime(selected_cds,
+                         #label_by_short_name = FALSE,
+                         color_cells_by = "level_3",
+                         min_expr=.5
+                         )
+```
+
+
+### pDC
+
+```{r}
+srat_pDC = readRDS(here::here('output/04.rm_cells/seurat_pDC.rds'))
+cds_pDC = readRDS(here::here('output/04.rm_cells/monocle3_pDC.rds'))
+```
+
+```{r fig.width=3, fig.height=2.5}
+plot_cells(cds_pDC,
+           color_cells_by = "level_3",
+           group_label_size = 3,
+           label_groups_by_cluster = FALSE,
+           label_leaves = FALSE,
+           label_branch_points = FALSE,
+           cell_size = .8) +
+   scale_color_manual(values = mye_level_3_color) +
+  my_theme
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.monocle3.pDC.pdf"),
+  width = 3, height = 2.5
+)
+```
+
+
+pseudotime
+
+```{r , fig.width=3, fig.height=2.5}
+plot_cells(cds_pDC,
+                color_cells_by = "pseudotime",
+                label_cell_groups=FALSE,
+                label_leaves=FALSE,
+                label_branch_points=FALSE,
+                cell_size = .8,
+                graph_label_size=1.5) +
+  my_theme
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.monocle3_pseudotime.pDC.pdf"),
+  width = 3, height = 2.5
+)
+```
+
+
+SOX4
+
+```{r fig.width=2, fig.height=1.8}
+FeaturePlot(srat_pDC, features = "SOX4", pt.size = .1, order = T) +
+  labs(title = NULL) +
+  my_theme
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.monocle3_genes.pDC.SOX4.pdf"),
+  width = 2, height = 1.8
+)
+```
+
+
+## Session info
+

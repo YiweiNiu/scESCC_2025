@@ -1,0 +1,693 @@
+---
+title: "vdj.tcr.gene_usage"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME = "vdj.tcr.gene_usage"
+#dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+    if (before) {
+        print(paste("Start:", Sys.time()))
+        NOW <<- Sys.time()
+    } else {
+        print(paste("Stop:", Sys.time()))
+        print(Sys.time() - NOW)
+    }
+})
+
+knitr::opts_chunk$set(
+    autodep        = TRUE,
+    cache          = TRUE,
+    cache.path     = paste0("cache/", DOCNAME, "/"),
+    cache.lazy     = FALSE, 
+    cache.comments = FALSE,
+    echo           = TRUE,
+    error          = FALSE,
+    fig.align      = "center",
+    fig.width      = 10,
+    fig.height     = 8,
+    message        = FALSE,
+    warning        = FALSE,
+    timeit         = TRUE
+)
+```
+
+Load packages
+
+```{r libaries, cache = FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(patchwork)
+library(cowplot)
+library(ComplexHeatmap)
+library(pheatmap)
+library(ggpubr)
+library(ggrepel)
+library(ggcorrplot)
+library(circlize)
+theme_set(theme_cowplot())
+
+# rigde
+library(ggridges)
+
+# color
+library(ggsci)
+library(RColorBrewer)
+
+# Seurat
+library(Seurat)
+```
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+devtools::load_all('/T02Data/niuyw1/Rscir')
+```
+
+分析 TCR 的 gene usage
+
+## Set up
+
+Load data
+
+```{r load-data, cache=FALSE, message=FALSE, warning=FALSE}
+seurat = readRDS(here::here('output/04.rm_cells/seurat_tcells.rds'))
+Idents(seurat) <- 'seurat_clusters'
+
+# export cellmeta
+vars = c("UMAP_1", "UMAP_2", "seurat_clusters", 'cellType', 'Patient', 'Tissue',
+         'Origin2_n', "Origin3", 'Metastasis_n', "Origin", 'Source',
+         "Origin2", "Metastasis",
+         "level_1", "level_2", "level_3")
+metadata <- FetchData(seurat,
+                      vars = vars) %>%
+  rownames_to_column('barcode')
+
+clones = read_csv('/niuyw-usb-disk/Projects/scESCA/cellranger/TCR/200121_6samples.clonotype_tcr.csv')
+```
+
+## Neat data
+
+Merge metadata with clonotypes
+
+```{r merge-meta-clonotypes}
+clones = clones %>%
+  filter(clonotype != 'None') %>%  # cells with alpha-beta pair
+  mutate(clonotype_size = as.numeric(clonotype_size)) %>%
+  mutate(clonal_expansion = case_when(
+    clonotype_size == 1 ~ 'No',
+    TRUE ~ 'Clonal'
+  ))
+
+d_4_p = metadata %>%
+  left_join(clones, by = 'barcode') %>%
+  filter(!is.na(clonotype))
+
+head(d_4_p)
+```
+
+## Overall
+
+计算所有基因在每个 cluster 中的使用比例，然后观察其相关性
+
+All clusters
+
+```{r overall-usage, fig.width=8, fig.height=7, cache=FALSE}
+mat = d_4_p %>%
+  dplyr::select(barcode, level_3, ends_with(c("_v_gene", "_j_gene"))) %>%
+  pivot_longer(cols = ends_with("gene"), names_to = "tmp", values_to = "gene") %>%
+  group_by(level_3, gene) %>%
+  summarise(n = n()) %>%
+  mutate(prop = n/sum(n)) %>%
+  pivot_wider(id_cols = "gene",
+              names_from = "level_3", values_from = "prop",
+              values_fill = 0) %>%
+  column_to_rownames("gene")
+
+pheatmap(cor(mat, method = "spearman"), clustering_method = "average")
+```
+
+CD4
+
+```{r overall-usage-cd4, fig.width=6, fig.height=5, cache=FALSE}
+mat_cd4 = mat %>%
+  dplyr::select(starts_with("CD4"))
+
+pheatmap(cor(mat_cd4, method = "spearman"), clustering_method = "average")
+```
+
+CD8
+
+```{r overall-usage-cd8, fig.width=6, fig.height=5, cache=FALSE}
+mat_cd8 = mat %>%
+  dplyr::select(starts_with("CD8"))
+
+pheatmap(cor(mat_cd8, method = "spearman"), clustering_method = "average")
+```
+
+## TRA Gene usage {.tabset}
+
+### V gene {.tabset}
+
+#### Cluster {.tabset}
+
+```{r TRA-V-Cluster, fig.height=4, fig.width=8, eval=FALSE}
+d_4_p %>%
+  filter(seurat_clusters == '0') %>%
+  Rscir::PlotGroupAbundance(groupby = 'TRA_v_gene', fraction = T)
+```
+
+```{r TRA-V-gene-usage-each-cluster, results = "hide"}
+clusters = levels(d_4_p$seurat_clusters)
+src_list <- lapply(clusters, function(s){
+    src <- c(
+        "##### Cluster {{s}} {.unnumbered}",
+        "```{r TRA-V-gene-usage-cluster-{{s}}, fig.height=4, fig.width=8}",
+        "d_4_p %>% filter(seurat_clusters == {{s}}) %>% Rscir::PlotGroupAbundance(groupby = 'TRA_v_gene', fraction = T)",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+#### level_3 {.tabset}
+
+```{r TRA-V-level_3, fig.height=4, fig.width=8, eval=FALSE}
+d_4_p %>%
+  filter(level_3 == 'CD4-C1-Tcm') %>%
+  Rscir::PlotGroupAbundance(groupby = 'TRA_v_gene', fraction = T)
+```
+
+```{r TRA-V-gene-usage-each-level_3, results = "hide"}
+level_3 = levels(d_4_p$level_3)
+src_list <- lapply(level_3, function(s){
+    src <- c(
+        "##### {{s}} {.unnumbered}",
+        "```{r TRA-V-gene-usage-level_3-{{s}}, fig.height=4, fig.width=8}",
+        "d_4_p %>% filter(level_3 == '{{s}}') %>% Rscir::PlotGroupAbundance(groupby = 'TRA_v_gene', fraction = T)",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+#### Tissue {.tabset}
+
+```{r TRA-V-Tissue, fig.height=4, fig.width=8, eval=FALSE}
+d_4_p %>%
+  filter(Tissue == 'PBMC') %>%
+  Rscir::PlotGroupAbundance(groupby = 'TRA_v_gene', fraction = T)
+```
+
+```{r TRA-V-gene-usage-each-Tissue, results = "hide"}
+tissues = levels(d_4_p$Tissue)
+src_list <- lapply(tissues, function(s){
+    src <- c(
+        "##### {{s}} {.unnumbered}",
+        "```{r TRA-V-gene-usage-tissue-{{s}}, fig.height=4, fig.width=8}",
+        "d_4_p %>% filter(Tissue == '{{s}}') %>% Rscir::PlotGroupAbundance(groupby = 'TRA_v_gene', fraction = T)",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+#### Origin2_n {.tabset}
+
+```{r TRA-V-Origin2_n, fig.height=4, fig.width=8, eval=FALSE}
+d_4_p %>%
+  filter(Origin2_n == 'PBMC') %>%
+  Rscir::PlotGroupAbundance(groupby = 'TRA_v_gene', fraction = T)
+```
+
+```{r TRA-V-gene-usage-each-Origin2_n, results = "hide"}
+tissues = levels(d_4_p$Origin2_n)
+src_list <- lapply(tissues, function(s){
+    src <- c(
+        "##### {{s}} {.unnumbered}",
+        "```{r TRA-V-gene-usage-Origin2_n-{{s}}, fig.height=4, fig.width=8}",
+        "d_4_p %>% filter(Origin2_n == '{{s}}') %>% Rscir::PlotGroupAbundance(groupby = 'TRA_v_gene', fraction = T)",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+#### Origin {.tabset}
+
+```{r TRA-V-Origin, fig.height=4, fig.width=8, eval=FALSE}
+d_4_p %>%
+  filter(Origin == 'PBMC2') %>%
+  Rscir::PlotGroupAbundance(groupby = 'TRA_v_gene', fraction = T)
+```
+
+```{r TRA-V-gene-usage-each-Origin, results = "hide"}
+origins = levels(d_4_p$Origin)
+src_list <- lapply(origins, function(s){
+    src <- c(
+        "##### {{s}} {.unnumbered}",
+        "```{r TRA-V-gene-usage-origin-{{s}}, fig.height=4, fig.width=8}",
+        "d_4_p %>% filter(Origin == '{{s}}') %>% Rscir::PlotGroupAbundance(groupby = 'TRA_v_gene', fraction = T)",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+
+### J gene {.tabset}
+
+#### Cluster {.tabset}
+
+```{r TRA-J-gene-usage-each-cluster, results = "hide"}
+clusters = levels(d_4_p$seurat_clusters)
+src_list <- lapply(clusters, function(s){
+    src <- c(
+        "##### Cluster {{s}} {.unnumbered}",
+        "```{r TRA-J-gene-usage-cluster-{{s}}, fig.height=4, fig.width=8}",
+        "d_4_p %>% filter(seurat_clusters == {{s}}) %>% Rscir::PlotGroupAbundance(groupby = 'TRA_j_gene', fraction = T)",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+
+#### level_3 {.tabset}
+
+```{r TRA-J-level_3, fig.height=4, fig.width=8, eval=FALSE}
+d_4_p %>%
+  filter(level_3 == 'CD4-C1-Tcm') %>%
+  Rscir::PlotGroupAbundance(groupby = 'TRA_j_gene', fraction = T)
+```
+
+```{r TRA-J-gene-usage-each-level_3, results = "hide"}
+clusters = levels(d_4_p$level_3)
+src_list <- lapply(clusters, function(s){
+    src <- c(
+        "##### {{s}} {.unnumbered}",
+        "```{r TRA-J-gene-usage-level_3-{{s}}, fig.height=4, fig.width=8}",
+        "d_4_p %>% filter(level_3 == '{{s}}') %>% Rscir::PlotGroupAbundance(groupby = 'TRA_j_gene', fraction = T)",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+#### Tissue {.tabset}
+
+```{r TRA-J-gene-usage-each-Tissue, results = "hide"}
+tissues = levels(d_4_p$Tissue)
+src_list <- lapply(tissues, function(s){
+    src <- c(
+        "##### {{s}} {.unnumbered}",
+        "```{r TRA-J-gene-usage-tissue-{{s}}, fig.height=4, fig.width=8}",
+        "d_4_p %>% filter(Tissue == '{{s}}') %>% Rscir::PlotGroupAbundance(groupby = 'TRA_j_gene', fraction = T)",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+#### Origin {.tabset}
+
+```{r TRA-J-gene-usage-each-Origin, results = "hide"}
+origins = levels(d_4_p$Origin)
+src_list <- lapply(origins, function(s){
+    src <- c(
+        "##### {{s}} {.unnumbered}",
+        "```{r TRA-J-gene-usage-origin-{{s}}, fig.height=4, fig.width=8}",
+        "d_4_p %>% filter(Origin == '{{s}}') %>% Rscir::PlotGroupAbundance(groupby = 'TRA_j_gene', fraction = T)",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+
+## TRB Gene usage {.tabset}
+
+### V gene {.tabset}
+
+#### Cluster {.tabset}
+
+```{r TRB-V-Cluster, fig.height=4, fig.width=8, eval=FALSE}
+d_4_p %>%
+  filter(seurat_clusters == '0') %>%
+  Rscir::PlotGroupAbundance(groupby = 'TRB_v_gene', fraction = T)
+```
+
+```{r TRB-V-gene-usage-each-cluster, results = "hide"}
+clusters = levels(d_4_p$seurat_clusters)
+src_list <- lapply(clusters, function(s){
+    src <- c(
+        "##### Cluster {{s}} {.unnumbered}",
+        "```{r TRB-V-gene-usage-cluster-{{s}}, fig.height=4, fig.width=8}",
+        "d_4_p %>% filter(seurat_clusters == {{s}}) %>% Rscir::PlotGroupAbundance(groupby = 'TRB_v_gene', fraction = T)",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+#### level_3 {.tabset}
+
+```{r TRB-V-level_3, fig.height=4, fig.width=8, eval=FALSE}
+d_4_p %>%
+  filter(level_3 == 'CD4-C1-Tcm') %>%
+  Rscir::PlotGroupAbundance(groupby = 'TRB_v_gene', fraction = T)
+```
+
+```{r TRB-V-gene-usage-each-level_3, results = "hide"}
+clusters = levels(d_4_p$level_3)
+src_list <- lapply(clusters, function(s){
+    src <- c(
+        "##### {{s}} {.unnumbered}",
+        "```{r TRB-V-gene-usage-level_3-{{s}}, fig.height=4, fig.width=8}",
+        "d_4_p %>% filter(level_3 == '{{s}}') %>% Rscir::PlotGroupAbundance(groupby = 'TRB_v_gene', fraction = T)",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+#### Tissue {.tabset}
+
+```{r TRB-V-Tissue, fig.height=4, fig.width=8, eval=FALSE}
+d_4_p %>%
+  filter(Tissue == 'PBMC') %>%
+  Rscir::PlotGroupAbundance(groupby = 'TRB_v_gene', fraction = T)
+```
+
+```{r TRB-V-gene-usage-each-Tissue, results = "hide"}
+tissues = levels(d_4_p$Tissue)
+src_list <- lapply(tissues, function(s){
+    src <- c(
+        "##### {{s}} {.unnumbered}",
+        "```{r TRB-V-gene-usage-tissue-{{s}}, fig.height=4, fig.width=8}",
+        "d_4_p %>% filter(Tissue == '{{s}}') %>% Rscir::PlotGroupAbundance(groupby = 'TRB_v_gene', fraction = T)",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+#### Origin2_n {.tabset}
+
+```{r TRB-V-Origin2_n, fig.height=4, fig.width=8, eval=FALSE}
+d_4_p %>%
+  filter(Origin2_n == 'PBMC1') %>%
+  Rscir::PlotGroupAbundance(groupby = 'TRB_v_gene', fraction = T)
+```
+
+```{r TRB-V-gene-usage-each-Origin2_n, results = "hide"}
+tissues = levels(d_4_p$Origin2_n)
+src_list <- lapply(tissues, function(s){
+    src <- c(
+        "##### {{s}} {.unnumbered}",
+        "```{r TRB-V-gene-usage-Origin2_n-{{s}}, fig.height=4, fig.width=8}",
+        "d_4_p %>% filter(Origin2_n == '{{s}}') %>% Rscir::PlotGroupAbundance(groupby = 'TRB_v_gene', fraction = T)",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+#### Origin {.tabset}
+
+```{r TRB-V-Origin, fig.height=4, fig.width=8, eval=FALSE}
+d_4_p %>%
+  filter(Origin == 'PBMC2') %>%
+  Rscir::PlotGroupAbundance(groupby = 'TRB_v_gene', fraction = T)
+```
+
+```{r TRB-V-gene-usage-each-Origin, results = "hide"}
+origins = levels(d_4_p$Origin)
+src_list <- lapply(origins, function(s){
+    src <- c(
+        "##### {{s}} {.unnumbered}",
+        "```{r TRB-V-gene-usage-origin-{{s}}, fig.height=4, fig.width=8}",
+        "d_4_p %>% filter(Origin == '{{s}}') %>% Rscir::PlotGroupAbundance(groupby = 'TRB_v_gene', fraction = T)",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+### J gene {.tabset}
+
+#### Cluster {.tabset}
+
+```{r TRB-J-gene-usage-each-cluster, results = "hide"}
+clusters = levels(d_4_p$seurat_clusters)
+src_list <- lapply(clusters, function(s){
+    src <- c(
+        "##### Cluster {{s}} {.unnumbered}",
+        "```{r TRB-J-gene-usage-cluster-{{s}}, fig.height=4, fig.width=8}",
+        "d_4_p %>% filter(seurat_clusters == {{s}}) %>% Rscir::PlotGroupAbundance(groupby = 'TRB_j_gene', fraction = T)",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+#### level_3 {.tabset}
+
+```{r TRB-J-gene-usage-each-level_3, results = "hide"}
+clusters = levels(d_4_p$level_3)
+src_list <- lapply(clusters, function(s){
+    src <- c(
+        "##### {{s}} {.unnumbered}",
+        "```{r TRB-J-gene-usage-level_3-{{s}}, fig.height=4, fig.width=8}",
+        "d_4_p %>% filter(level_3 == '{{s}}') %>% Rscir::PlotGroupAbundance(groupby = 'TRB_j_gene', fraction = T)",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+#### Tissue {.tabset}
+
+```{r TRB-J-gene-usage-each-Tissue, results = "hide"}
+tissues = levels(d_4_p$Tissue)
+src_list <- lapply(tissues, function(s){
+    src <- c(
+        "##### {{s}} {.unnumbered}",
+        "```{r TRB-J-gene-usage-tissue-{{s}}, fig.height=4, fig.width=8}",
+        "d_4_p %>% filter(Tissue == '{{s}}') %>% Rscir::PlotGroupAbundance(groupby = 'TRB_j_gene', fraction = T)",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+#### Origin2_n {.tabset}
+
+```{r TRB-J-gene-usage-each-Origin2_n, results = "hide"}
+tissues = levels(d_4_p$Origin2_n)
+src_list <- lapply(tissues, function(s){
+    src <- c(
+        "##### {{s}} {.unnumbered}",
+        "```{r TRB-J-gene-usage-Origin2_n-{{s}}, fig.height=4, fig.width=8}",
+        "d_4_p %>% filter(Origin2_n == '{{s}}') %>% Rscir::PlotGroupAbundance(groupby = 'TRB_j_gene', fraction = T)",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+#### Origin {.tabset}
+
+```{r TRB-J-gene-usage-each-Origin, results = "hide"}
+origins = levels(d_4_p$Origin)
+src_list <- lapply(origins, function(s){
+    src <- c(
+        "##### {{s}} {.unnumbered}",
+        "```{r TRB-J-gene-usage-origin-{{s}}, fig.height=4, fig.width=8}",
+        "d_4_p %>% filter(Origin == '{{s}}') %>% Rscir::PlotGroupAbundance(groupby = 'TRB_j_gene', fraction = T)",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+
+## Spectratype
+
+### TRA {.tabset}
+
+#### Cluster
+
+```{r Spectratype-TRA-Cluster, fig.height=5, fig.width=7}
+Rscir::PlotSpectratype(d_4_p, 'TRA_cdr3', target_col = 'seurat_clusters', fraction = T) +
+  scale_fill_manual(values = cluster_color_maps)
+```
+
+#### Tissue
+
+```{r Spectratype-TRA-Tissue, fig.height=5, fig.width=7}
+Rscir::PlotSpectratype(d_4_p, 'TRA_cdr3', target_col = 'Tissue', fraction = T) +
+  scale_fill_manual(values = tissue_color_maps)
+```
+
+#### Origin2_n
+
+```{r Spectratype-TRA-Origin2_n, fig.height=5, fig.width=7}
+Rscir::PlotSpectratype(d_4_p, 'TRA_cdr3', target_col = 'Origin2_n', fraction = T) +
+  scale_fill_manual(values = origin2_color_maps)
+```
+
+#### Origin
+
+```{r Spectratype-TRA-Origin, fig.height=5, fig.width=7}
+Rscir::PlotSpectratype(d_4_p, 'TRA_cdr3', target_col = 'Origin', fraction = T) +
+  scale_fill_manual(values = origin_color_maps)
+```
+
+#### Metastasis
+
+```{r Spectratype-TRA-Metastasis, fig.height=5, fig.width=7}
+Rscir::PlotSpectratype(d_4_p, 'TRA_cdr3', target_col = 'Metastasis', fraction = T) +
+  scale_fill_manual(values = metastasis_color_maps)
+```
+
+### TRB {.tabset}
+
+#### Cluster
+
+```{r Spectratype-TRB-Cluster, fig.height=5, fig.width=7}
+Rscir::PlotSpectratype(d_4_p, 'TRB_cdr3', target_col = 'seurat_clusters', fraction = T) +
+  scale_fill_manual(values = cluster_color_maps)
+```
+
+#### Tissue
+
+```{r Spectratype-TRB-Tissue, fig.height=5, fig.width=7}
+Rscir::PlotSpectratype(d_4_p, 'TRB_cdr3', target_col = 'Tissue', fraction = T) +
+  scale_fill_manual(values = tissue_color_maps)
+```
+
+#### Origin2_n
+
+```{r Spectratype-TRB-Origin2_n, fig.height=5, fig.width=7}
+Rscir::PlotSpectratype(d_4_p, 'TRB_cdr3', target_col = 'Origin2_n', fraction = T) +
+  scale_fill_manual(values = origin2_color_maps)
+```
+
+#### Origin
+
+```{r Spectratype-TRB-Origin, fig.height=5, fig.width=7}
+Rscir::PlotSpectratype(d_4_p, 'TRB_cdr3', target_col = 'Origin', fraction = T) +
+  scale_fill_manual(values = origin_color_maps)
+```
+
+#### Metastasis
+
+```{r Spectratype-TRB-Metastasis, fig.height=5, fig.width=7}
+Rscir::PlotSpectratype(d_4_p, 'TRB_cdr3', target_col = 'Metastasis', fraction = T) +
+  scale_fill_manual(values = metastasis_color_maps)
+```
+
+
+

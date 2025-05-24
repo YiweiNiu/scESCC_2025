@@ -1,0 +1,227 @@
+---
+title: "00.Fig.overview.supp"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "00.Fig.overview.supp"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = FALSE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+
+# patch
+library(patchwork)
+library(cowplot)
+my_theme <- theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+)
+geom.text.size <- 6 / (14 / 5)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+
+# color
+library(ggsci)
+
+# Seurat
+library(Seurat)
+
+# vis
+#library(scRNAtoolVis)
+```
+
+Load code
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+Load rds
+
+```{r load-rds, cache=FALSE}
+srat <- readRDS(here::here("output/04.rm_cells/seurat.rds"))
+srat
+```
+
+## Markers
+
+Plot markers (main)
+
+```{r plot-cell-markers-main, fig.width=7.5, fig.height=1.2, cache=FALSE}
+p.marker.main <- customFeaturePlot(srat, features = c(
+  # T
+  "CD3D",
+  # B
+  "CD79A",
+  # mye
+  "LYZ",
+  # mast
+  "TPSAB1",
+  # epi
+  "KRT6A",
+  # fib
+  "COL1A2",
+  # endo
+  "CDH5",
+  # platelets
+  "PPBP"
+  #
+)) %>%
+  wrap_plots(nrow = 1) & theme(plot.margin = margin(0))
+p.marker.main
+```
+
+FeaturePlot of markers (supp.)
+
+```{r plot-cell-markers-supp, fig.width=7.5, fig.height=4.5, cache=FALSE}
+p.marker.supp <- customFeaturePlot(srat, features = c(
+  # T
+  "CD3D", "CD3G", "CD3E", "CD2",
+  # B
+  "CD19", "MS4A1", "CD79A", "IGHM",
+  # mye
+  "LYZ", "FCER1G", "TYROBP", "AIF1",
+  # mast
+  "TPSAB1", "TPSB2", "MS4A2", "KIT",
+  # epi
+  "CNFN", "KRT6A", "CRNN", "KRT13",
+  # fib
+  "DCN", "COL1A1", "COL1A2", "LUM",
+  # endo
+  "PECAM1", "CLDN5", "CDH5", "VWF",
+  # platelets
+  "PPBP", "PF4", "ITGA2B", "ITGB3"
+  #
+)) %>%
+  wrap_plots(nrow = 4, byrow = FALSE) & theme(plot.margin = margin(0))
+p.marker.supp
+```
+
+## HC of Origin4
+
+Correlation plot
+
+```{r hc-Origin4-cor, cache=FALSE, fig.width=2, fig.height=2}
+# Get average expression of variable features across tissue
+# change identity to orig.ident
+Idents(srat) <- "Origin4"
+
+# get average expression across original ident
+var_ave_byOrigin4 = AverageExpression(srat, assays = "RNA", features = VariableFeatures(srat), slot = "data")
+
+# restore cell identity
+Idents(srat) <- "cellType"
+
+var_ave_byOrigin4.cor = cor(var_ave_byOrigin4$RNA)
+ggcorrplot(var_ave_byOrigin4.cor, hc.order=TRUE, type = "upper",
+           lab = TRUE, lab_size = 2) +
+  labs(x = NULL, y = NULL) +
+  my_theme +
+  theme(
+    axis.text.x = element_text(angle = 60, hjust = 1),
+    legend.position = c(.8, .25)
+  )
+```
+
+## UMAP of epi, fib, endo (epi as cluster)
+
+UMAP of epi, fib, endo (epi as malignant)
+
+```{r fig.width=7.6, fig.height=2.5}
+p.umap.endo <- DimPlot(srat.endo,
+  reduction = "umap", group.by = "level_2",
+  label = TRUE, label.size = geom.text.size,
+  raster = TRUE
+) +
+  scale_color_manual(values = endo_level_2_color) +
+  labs(title = NULL) +
+  my_theme +
+  NoLegend()
+
+p.umap.fib <- DimPlot(srat.fib,
+  reduction = "umap", group.by = "level_3",
+  label = TRUE, label.size = geom.text.size,
+  raster = TRUE
+) +
+  scale_color_manual(values = fib_level_3_color) +
+  labs(title = NULL) +
+  my_theme +
+  NoLegend()
+
+FetchData(srat.epi, vars = c("UMAP_1", "UMAP_2", "malignant")) %>%
+  ggplot(aes(x = UMAP_1, y = UMAP_2, color = malignant)) +
+  geom_point_rast() +
+  ggunchull::stat_unchull(alpha = 0.5, size = 1) +
+  scale_color_manual(values = epi_malig_colors) +
+  labs(title = NULL) +
+  my_theme
+
+p.umap.epi <- DimPlot(srat.epi,
+  reduction = "umap", group.by = "malignant",
+  label.size = geom.text.size,
+  raster = TRUE
+) +
+    ggunchull::stat_unchull()+
+  scale_color_manual(values = epi_malig_colors) +
+  labs(title = NULL) +
+  my_theme
+
+p.umap.epi + p.umap.fib + p.umap.endo
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.main.main.umap_stromal.epi_malig.pdf"),
+  height = 2.5, width = 7.6, device = cairo_pdf
+)
+```
+
+## Session info
+

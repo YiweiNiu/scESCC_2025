@@ -1,0 +1,152 @@
+---
+title: "CytoTRACE.epithelia"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME = "CytoTRACE.epithelia"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+    if (before) {
+        print(paste("Start:", Sys.time()))
+        NOW <<- Sys.time()
+    } else {
+        print(paste("Stop:", Sys.time()))
+        print(Sys.time() - NOW)
+    }
+})
+
+knitr::opts_chunk$set(
+    autodep        = TRUE,
+    cache          = FALSE,
+    cache.path     = paste0("cache/", DOCNAME, "/"),
+    cache.lazy     = FALSE, 
+    cache.comments = FALSE,
+    echo           = TRUE,
+    error          = FALSE,
+    fig.align      = "center",
+    fig.width      = 10,
+    fig.height     = 8,
+    message        = FALSE,
+    warning        = FALSE,
+    timeit         = TRUE
+)
+```
+
+Using [CytoTRACE](https://cytotrace.stanford.edu) to predict the differentiation state of cells. Higher CytoTRACE value implies higher developmental potential.
+
+> Paper of CytoTRACE: Gulati, G.S., Sikandar, S.S., Wesche, D.J., Manjunath, A., Bharadwaj, A., Berger, M.J., Ilagan, F., Kuo, A.H., Hsieh, R.W., Cai, S., et al. (2020). Single-cell transcriptional diversity is a hallmark of developmental potential. Science 367, 405–411.
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(ggplotify)
+library(ggcorrplot)
+library(cowplot)
+library(patchwork)
+library(ggpubr)
+theme_set(theme_cowplot())
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+
+# color
+library(ggsci)
+
+# Seurat
+library(Seurat)
+
+# CytoTRACE
+library(CytoTRACE)
+```
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+Load seurat rds
+
+```{r load-rds, cache=FALSE}
+seurat = readRDS(here::here('output/04.rm_cells/seurat_epithelia.rds'))
+Idents(seurat) <- 'seurat_clusters'
+seurat
+```
+
+Load CytoTRACE results
+
+```{r load-rds-CytoTRACE, cache=FALSE}
+result = readRDS(here::here("output", DOCNAME, "CytoTRACE.res.rds"))
+```
+
+## CytoTRACE
+
+Visualizing CytoTRACE results
+
+```{r vis-CytoTRACE-no-run, eval=FALSE, include=FALSE}
+# output pdf directly, not run
+emb = FetchData(seurat, vars = c('UMAP_1', 'UMAP_2'))
+phe = FetchData(seurat, vars = c('seurat_clusters'))
+phe = stats::setNames(as.character(phe[,1]), rownames(phe))
+phe = paste('C_', phe, sep = '')
+
+plotCytoTRACE(result, emb = emb, phenotype = phe)
+plotCytoGenes(results, numOfGenes = 10)
+```
+
+```{r vis-CytoTRACE, fig.height=7, fig.width=8}
+meta = FetchData(seurat, vars = c('UMAP_1', 'UMAP_2', 'seurat_clusters', "Patient")) %>%
+  rownames_to_column('barcode')
+
+tibble(barcode = names(result$CytoTRACE),
+       value = result$CytoTRACE) %>%
+  left_join(meta, by = 'barcode') %>%
+  ggplot(aes(x=UMAP_1, y=UMAP_2, color=value)) +
+  geom_point(size = .5) +
+  scale_color_viridis_c() +
+  labs(color = 'Predicted\norder')
+```
+
+```{r vis-box-CytoTRACE, fig.height=4, fig.width=8}
+tibble(barcode = names(result$CytoTRACE),
+       value = result$CytoTRACE) %>%
+  left_join(meta, by = 'barcode') %>%
+  ggplot(aes(x=reorder(seurat_clusters, -value, median), y=value, fill=seurat_clusters)) +
+  geom_boxplot() +
+  scale_fill_manual(values = cluster_color_maps) +
+  labs(y= 'Predicted order') +
+  theme(legend.position = 'none')
+```
+
+## By patient
+
+```{r fig.width=12, fig.height=9}
+#p = 'S0619'
+patients = unique(meta$Patient)
+lapply(patients, function(p){
+  res = readRDS(here::here("output", DOCNAME, paste0("CytoTRACE.res.", paste0(p, ".rds"))))
+  tibble(barcode = names(res$CytoTRACE),
+         value = res$CytoTRACE) %>%
+    left_join(meta, by = 'barcode') %>%
+    filter(Patient == p) %>%
+    ggplot(aes(x=reorder(seurat_clusters, -value, median), y=value, fill=seurat_clusters)) +
+    geom_boxplot() +
+    scale_fill_manual(values = cluster_color_maps) +
+    labs(y= 'Predicted order', title = p) +
+    theme(legend.position = 'none')
+}) %>%
+  wrap_plots(ncol = 2)
+```
+
+## Session info
+

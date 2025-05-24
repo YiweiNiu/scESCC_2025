@@ -1,0 +1,548 @@
+---
+title: "vdj.tcr.rep_ov.byPatient"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME = "vdj.tcr.rep_ov.byPatient"
+#dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+    if (before) {
+        print(paste("Start:", Sys.time()))
+        NOW <<- Sys.time()
+    } else {
+        print(paste("Stop:", Sys.time()))
+        print(Sys.time() - NOW)
+    }
+})
+
+knitr::opts_chunk$set(
+    autodep        = TRUE,
+    cache          = FALSE,
+    cache.lazy     = FALSE, 
+    cache.comments = FALSE,
+    echo           = TRUE,
+    error          = FALSE,
+    fig.align      = "center",
+    fig.width      = 10,
+    fig.height     = 8,
+    message        = FALSE,
+    warning        = FALSE,
+    timeit         = TRUE
+)
+```
+
+Load packages
+
+```{r libaries, cache = FALSE, warning=FALSE, message=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+
+# patch
+library(patchwork)
+library(cowplot)
+my_theme <- theme_cowplot(font_size=8) +
+  theme(panel.background=element_rect(fill="white"),
+        line = element_line(colour="black", lineend="round"),
+        text = element_text(size=6, colour="black"),
+        plot.title = element_text(size=6),
+        axis.text = element_text(colour="black"),
+        axis.title = element_text(size = 6, colour = "black"),
+        axis.ticks = element_line(colour="black"),
+        axis.ticks.length = unit(.1,"cm"),
+        strip.background = element_blank(),
+        axis.text.x=element_text(angle=45, hjust=1))
+geom.text.size = 6/(14/5)
+```
+
+```{r source, cache = FALSE, message=FALSE, warning=FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+devtools::load_all('/T02Data/niuyw1/Rscir')
+```
+
+分析 TCR 的 clonotype sharing
+
+参考：Zheng, C., Zheng, L., Yoo, J.-K., Guo, H., Zhang, Y., Guo, X., Kang, B., Hu, R., Huang, J. Y., Zhang, Q., Liu, Z., Dong, M., Hu, X., Ouyang, W., Peng, J., & Zhang, Z. (2017). Landscape of Infiltrating T Cells in Liver Cancer Revealed by Single-Cell Sequencing. Cell, 169(7), 1342-1356.e16. https://doi.org/10/gbjwfx
+
+## Set up
+
+Load data
+
+```{r load-data, cache=FALSE, message=FALSE, warning=FALSE}
+metadata = read_csv(here::here("output", "04.rm_cells", "seurat_tcells.cellmeta.csv"))
+clones = read_csv('/niuyw-usb-disk/Projects/scESCA/cellranger/TCR/200121_6samples.clonotype_tcr.csv')
+```
+
+Merge metadata with clonotype
+
+```{r merge-meta-clonotypes}
+clones = clones %>%
+  filter(clonotype != 'None') %>%  # cells with alpha-beta pair
+  mutate(clonotype_size = as.numeric(clonotype_size)) %>%
+  mutate(clonal_expansion = case_when(
+    clonotype_size == 1 ~ 'No',
+    TRUE ~ 'Clonal'
+  ))
+
+d_4_p = metadata %>%
+  left_join(clones, by = 'barcode') %>%
+  filter(!is.na(clonotype))
+
+head(d_4_p)
+```
+
+## CD8 {.tabset}
+
+```{r results = "hide"}
+tmp = unique(d_4_p$Patient)
+src_list <- lapply(tmp, function(s){
+    src <- c(
+        "### {{s}}",
+        "#### Origin2_n",
+        "```{r fig.height=8, fig.width=8}",
+        "df = d_4_p %>% filter(Patient == '{{s}}', level_1 == 'CD8') %>%",
+        "dplyr::select(barcode, Origin2_n, Origin3, Tissue, Source, clonotype)",
+        "PlotRepOverlap2(df, groupby = 'Origin2_n', col_ann = origin2_color_maps)",
+        "```",
+        "",
+        "#### Source",
+        "```{r fig.height=8, fig.width=8}",
+        "PlotRepOverlap2(df, groupby = 'Source')",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+## CD8 level_2 {.tabset}
+
+```{r results = "hide"}
+tmp = d_4_p %>% filter(level_1 == "CD8") %>% pull(level_2) %>% unique()
+src_list <- lapply(tmp, function(s){
+    src <- c(
+        "### {{s}} {.tabset}",
+
+        "#### S0619",
+        "##### Origin2_n",
+        "```{r fig.height=8, fig.width=8}",
+        "df = d_4_p %>% filter(Patient == 'S0619', level_1 == 'CD8', level_2 == '{{s}}') %>%",
+        "dplyr::select(barcode, Origin2_n, Origin3, Tissue, Source, clonotype)",
+        "PlotRepOverlap2(df, groupby = 'Origin2_n', col_ann = origin2_color_maps)",
+        "```",
+        "",
+        "##### Source",
+        "```{r fig.height=8, fig.width=8}",
+        "PlotRepOverlap2(df, groupby = 'Source')",
+        "```",
+
+        "#### S0730",
+        "##### Origin2_n",
+        "```{r fig.height=8, fig.width=8}",
+        "df = d_4_p %>% filter(Patient == 'S0730', level_1 == 'CD8', level_2 == '{{s}}') %>%",
+        "dplyr::select(barcode, Origin2_n, Origin3, Tissue, Source, clonotype)",
+        "PlotRepOverlap2(df, groupby = 'Origin2_n', col_ann = origin2_color_maps)",
+        "```",
+        "",
+        "##### Source",
+        "```{r fig.height=8, fig.width=8}",
+        "PlotRepOverlap2(df, groupby = 'Source')",
+        "```",
+
+        "#### S0819",
+        "##### Origin2_n",
+        "```{r fig.height=8, fig.width=8}",
+        "df = d_4_p %>% filter(Patient == 'S0819', level_1 == 'CD8', level_2 == '{{s}}') %>%",
+        "dplyr::select(barcode, Origin2_n, Origin3, Tissue, Source, clonotype)",
+        "PlotRepOverlap2(df, groupby = 'Origin2_n', col_ann = origin2_color_maps)",
+        "```",
+        "",
+        "##### Source",
+        "```{r fig.height=8, fig.width=8}",
+        "PlotRepOverlap2(df, groupby = 'Source')",
+        "```",
+
+        "#### S0930",
+        "##### Origin2_n",
+        "```{r fig.height=8, fig.width=8}",
+        "df = d_4_p %>% filter(Patient == 'S0930', level_1 == 'CD8', level_2 == '{{s}}') %>%",
+        "dplyr::select(barcode, Origin2_n, Origin3, Tissue, Source, clonotype)",
+        "PlotRepOverlap2(df, groupby = 'Origin2_n', col_ann = origin2_color_maps)",
+        "```",
+        "",
+        "##### Source",
+        "```{r fig.height=8, fig.width=8}",
+        "PlotRepOverlap2(df, groupby = 'Source')",
+        "```",
+
+        "#### S1125",
+        "##### Origin2_n",
+        "```{r fig.height=8, fig.width=8}",
+        "df = d_4_p %>% filter(Patient == 'S1125', level_1 == 'CD8', level_2 == '{{s}}') %>%",
+        "dplyr::select(barcode, Origin2_n, Origin3, Tissue, Source, clonotype)",
+        "PlotRepOverlap2(df, groupby = 'Origin2_n', col_ann = origin2_color_maps)",
+        "```",
+        "",
+        "##### Source",
+        "```{r fig.height=8, fig.width=8}",
+        "PlotRepOverlap2(df, groupby = 'Source')",
+        "```",
+
+        "#### S1204",
+        "##### Origin2_n",
+        "```{r fig.height=8, fig.width=8}",
+        "df = d_4_p %>% filter(Patient == 'S1204', level_1 == 'CD8', level_2 == '{{s}}') %>%",
+        "dplyr::select(barcode, Origin2_n, Origin3, Tissue, Source, clonotype)",
+        "PlotRepOverlap2(df, groupby = 'Origin2_n', col_ann = origin2_color_maps)",
+        "```",
+        "",
+        "##### Source",
+        "```{r fig.height=8, fig.width=8}",
+        "PlotRepOverlap2(df, groupby = 'Source')",
+        "```",
+
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+## CD8 level_3
+
+```{r results = "hide"}
+tmp = d_4_p %>% filter(level_1 == "CD8") %>% pull(level_3) %>% unique()
+src_list <- lapply(tmp, function(s){
+    src <- c(
+        "### {{s}} {.tabset}",
+
+        "#### S0619",
+        "##### Origin2_n",
+        "```{r fig.height=8, fig.width=8}",
+        "df = d_4_p %>% filter(Patient == 'S0619', level_1 == 'CD8', level_3 == '{{s}}') %>%",
+        "dplyr::select(barcode, Origin2_n, Origin3, Tissue, Source, clonotype)",
+        "PlotRepOverlap2(df, groupby = 'Origin2_n', col_ann = origin2_color_maps)",
+        "```",
+        "",
+        "##### Source",
+        "```{r fig.height=8, fig.width=8}",
+        "PlotRepOverlap2(df, groupby = 'Source')",
+        "```",
+
+        "#### S0730",
+        "##### Origin2_n",
+        "```{r fig.height=8, fig.width=8}",
+        "df = d_4_p %>% filter(Patient == 'S0730', level_1 == 'CD8', level_3 == '{{s}}') %>%",
+        "dplyr::select(barcode, Origin2_n, Origin3, Tissue, Source, clonotype)",
+        "PlotRepOverlap2(df, groupby = 'Origin2_n', col_ann = origin2_color_maps)",
+        "```",
+        "",
+        "##### Source",
+        "```{r fig.height=8, fig.width=8}",
+        "PlotRepOverlap2(df, groupby = 'Source')",
+        "```",
+
+        "#### S0819",
+        "##### Origin2_n",
+        "```{r fig.height=8, fig.width=8}",
+        "df = d_4_p %>% filter(Patient == 'S0819', level_1 == 'CD8', level_3 == '{{s}}') %>%",
+        "dplyr::select(barcode, Origin2_n, Origin3, Tissue, Source, clonotype)",
+        "PlotRepOverlap2(df, groupby = 'Origin2_n', col_ann = origin2_color_maps)",
+        "```",
+        "",
+        "##### Source",
+        "```{r fig.height=8, fig.width=8}",
+        "PlotRepOverlap2(df, groupby = 'Source')",
+        "```",
+
+        "#### S0930",
+        "##### Origin2_n",
+        "```{r fig.height=8, fig.width=8}",
+        "df = d_4_p %>% filter(Patient == 'S0930', level_1 == 'CD8', level_3 == '{{s}}') %>%",
+        "dplyr::select(barcode, Origin2_n, Origin3, Tissue, Source, clonotype)",
+        "PlotRepOverlap2(df, groupby = 'Origin2_n', col_ann = origin2_color_maps)",
+        "```",
+        "",
+        "##### Source",
+        "```{r fig.height=8, fig.width=8}",
+        "PlotRepOverlap2(df, groupby = 'Source')",
+        "```",
+
+        "#### S1125",
+        "##### Origin2_n",
+        "```{r fig.height=8, fig.width=8}",
+        "df = d_4_p %>% filter(Patient == 'S1125', level_1 == 'CD8', level_3 == '{{s}}') %>%",
+        "dplyr::select(barcode, Origin2_n, Origin3, Tissue, Source, clonotype)",
+        "PlotRepOverlap2(df, groupby = 'Origin2_n', col_ann = origin2_color_maps)",
+        "```",
+        "",
+        "##### Source",
+        "```{r fig.height=8, fig.width=8}",
+        "PlotRepOverlap2(df, groupby = 'Source')",
+        "```",
+
+        "#### S1204",
+        "##### Origin2_n",
+        "```{r fig.height=8, fig.width=8}",
+        "df = d_4_p %>% filter(Patient == 'S1204', level_1 == 'CD8', level_3 == '{{s}}') %>%",
+        "dplyr::select(barcode, Origin2_n, Origin3, Tissue, Source, clonotype)",
+        "PlotRepOverlap2(df, groupby = 'Origin2_n', col_ann = origin2_color_maps)",
+        "```",
+        "",
+        "##### Source",
+        "```{r fig.height=8, fig.width=8}",
+        "PlotRepOverlap2(df, groupby = 'Source')",
+        "```",
+
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+## CD4
+
+```{r results = "hide"}
+tmp = unique(d_4_p$Patient)
+src_list <- lapply(tmp, function(s){
+    src <- c(
+        "### {{s}} {.tabset}",
+        "#### Origin2_n",
+        "```{r fig.height=8, fig.width=8}",
+        "df = d_4_p %>% filter(Patient == '{{s}}', level_1 == 'CD4') %>%",
+        "dplyr::select(barcode, Origin2_n, Origin3, Tissue, Source, clonotype)",
+        "PlotRepOverlap2(df, groupby = 'Origin2_n', col_ann = origin2_color_maps)",
+        "```",
+        "",
+        "#### Source",
+        "```{r fig.height=8, fig.width=8}",
+        "PlotRepOverlap2(df, groupby = 'Source')",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+## CD4 level_2 {.tabset}
+
+```{r results = "hide"}
+tmp = d_4_p %>% filter(level_1 == "CD4") %>% pull(level_2) %>% unique()
+src_list <- lapply(tmp, function(s){
+    src <- c(
+        "### {{s}} {.tabset}",
+
+        "#### S0619",
+        "##### Origin2_n",
+        "```{r fig.height=8, fig.width=8}",
+        "df = d_4_p %>% filter(Patient == 'S0619', level_1 == 'CD4', level_2 == '{{s}}') %>%",
+        "dplyr::select(barcode, Origin2_n, Origin3, Tissue, Source, clonotype)",
+        "PlotRepOverlap2(df, groupby = 'Origin2_n', col_ann = origin2_color_maps)",
+        "```",
+        "",
+        "##### Source",
+        "```{r fig.height=8, fig.width=8}",
+        "PlotRepOverlap2(df, groupby = 'Source')",
+        "```",
+
+        "#### S0730",
+        "##### Origin2_n",
+        "```{r fig.height=8, fig.width=8}",
+        "df = d_4_p %>% filter(Patient == 'S0730', level_1 == 'CD4', level_2 == '{{s}}') %>%",
+        "dplyr::select(barcode, Origin2_n, Origin3, Tissue, Source, clonotype)",
+        "PlotRepOverlap2(df, groupby = 'Origin2_n', col_ann = origin2_color_maps)",
+        "```",
+        "",
+        "##### Source",
+        "```{r fig.height=8, fig.width=8}",
+        "PlotRepOverlap2(df, groupby = 'Source')",
+        "```",
+
+        "#### S0819",
+        "##### Origin2_n",
+        "```{r fig.height=8, fig.width=8}",
+        "df = d_4_p %>% filter(Patient == 'S0819', level_1 == 'CD4', level_2 == '{{s}}') %>%",
+        "dplyr::select(barcode, Origin2_n, Origin3, Tissue, Source, clonotype)",
+        "PlotRepOverlap2(df, groupby = 'Origin2_n', col_ann = origin2_color_maps)",
+        "```",
+        "",
+        "##### Source",
+        "```{r fig.height=8, fig.width=8}",
+        "PlotRepOverlap2(df, groupby = 'Source')",
+        "```",
+
+        "#### S0930",
+        "##### Origin2_n",
+        "```{r fig.height=8, fig.width=8}",
+        "df = d_4_p %>% filter(Patient == 'S0930', level_1 == 'CD4', level_2 == '{{s}}') %>%",
+        "dplyr::select(barcode, Origin2_n, Origin3, Tissue, Source, clonotype)",
+        "PlotRepOverlap2(df, groupby = 'Origin2_n', col_ann = origin2_color_maps)",
+        "```",
+        "",
+        "##### Source",
+        "```{r fig.height=8, fig.width=8}",
+        "PlotRepOverlap2(df, groupby = 'Source')",
+        "```",
+
+        "#### S1125",
+        "##### Origin2_n",
+        "```{r fig.height=8, fig.width=8}",
+        "df = d_4_p %>% filter(Patient == 'S1125', level_1 == 'CD4', level_2 == '{{s}}') %>%",
+        "dplyr::select(barcode, Origin2_n, Origin3, Tissue, Source, clonotype)",
+        "PlotRepOverlap2(df, groupby = 'Origin2_n', col_ann = origin2_color_maps)",
+        "```",
+        "",
+        "##### Source",
+        "```{r fig.height=8, fig.width=8}",
+        "PlotRepOverlap2(df, groupby = 'Source')",
+        "```",
+
+        "#### S1204",
+        "##### Origin2_n",
+        "```{r fig.height=8, fig.width=8}",
+        "df = d_4_p %>% filter(Patient == 'S1204', level_1 == 'CD4', level_2 == '{{s}}') %>%",
+        "dplyr::select(barcode, Origin2_n, Origin3, Tissue, Source, clonotype)",
+        "PlotRepOverlap2(df, groupby = 'Origin2_n', col_ann = origin2_color_maps)",
+        "```",
+        "",
+        "##### Source",
+        "```{r fig.height=8, fig.width=8}",
+        "PlotRepOverlap2(df, groupby = 'Source')",
+        "```",
+
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+## CD4 level_3
+
+```{r results = "hide"}
+tmp = d_4_p %>% filter(level_1 == "CD4") %>% pull(level_3) %>% unique()
+src_list <- lapply(tmp, function(s){
+    src <- c(
+        "### {{s}} {.tabset}",
+
+        "#### S0619",
+        "##### Origin2_n",
+        "```{r fig.height=8, fig.width=8}",
+        "df = d_4_p %>% filter(Patient == 'S0619', level_1 == 'CD4', level_3 == '{{s}}') %>%",
+        "dplyr::select(barcode, Origin2_n, Origin3, Tissue, Source, clonotype)",
+        "PlotRepOverlap2(df, groupby = 'Origin2_n', col_ann = origin2_color_maps)",
+        "```",
+        "",
+        "##### Source",
+        "```{r fig.height=8, fig.width=8}",
+        "PlotRepOverlap2(df, groupby = 'Source')",
+        "```",
+
+        "#### S0730",
+        "##### Origin2_n",
+        "```{r fig.height=8, fig.width=8}",
+        "df = d_4_p %>% filter(Patient == 'S0730', level_1 == 'CD4', level_3 == '{{s}}') %>%",
+        "dplyr::select(barcode, Origin2_n, Origin3, Tissue, Source, clonotype)",
+        "PlotRepOverlap2(df, groupby = 'Origin2_n', col_ann = origin2_color_maps)",
+        "```",
+        "",
+        "##### Source",
+        "```{r fig.height=8, fig.width=8}",
+        "PlotRepOverlap2(df, groupby = 'Source')",
+        "```",
+
+        "#### S0819",
+        "##### Origin2_n",
+        "```{r fig.height=8, fig.width=8}",
+        "df = d_4_p %>% filter(Patient == 'S0819', level_1 == 'CD4', level_3 == '{{s}}') %>%",
+        "dplyr::select(barcode, Origin2_n, Origin3, Tissue, Source, clonotype)",
+        "PlotRepOverlap2(df, groupby = 'Origin2_n', col_ann = origin2_color_maps)",
+        "```",
+        "",
+        "##### Source",
+        "```{r fig.height=8, fig.width=8}",
+        "PlotRepOverlap2(df, groupby = 'Source')",
+        "```",
+
+        "#### S0930",
+        "##### Origin2_n",
+        "```{r fig.height=8, fig.width=8}",
+        "df = d_4_p %>% filter(Patient == 'S0930', level_1 == 'CD4', level_3 == '{{s}}') %>%",
+        "dplyr::select(barcode, Origin2_n, Origin3, Tissue, Source, clonotype)",
+        "PlotRepOverlap2(df, groupby = 'Origin2_n', col_ann = origin2_color_maps)",
+        "```",
+        "",
+        "##### Source",
+        "```{r fig.height=8, fig.width=8}",
+        "PlotRepOverlap2(df, groupby = 'Source')",
+        "```",
+
+        "#### S1125",
+        "##### Origin2_n",
+        "```{r fig.height=8, fig.width=8}",
+        "df = d_4_p %>% filter(Patient == 'S1125', level_1 == 'CD4', level_3 == '{{s}}') %>%",
+        "dplyr::select(barcode, Origin2_n, Origin3, Tissue, Source, clonotype)",
+        "PlotRepOverlap2(df, groupby = 'Origin2_n', col_ann = origin2_color_maps)",
+        "```",
+        "",
+        "##### Source",
+        "```{r fig.height=8, fig.width=8}",
+        "PlotRepOverlap2(df, groupby = 'Source')",
+        "```",
+
+        "#### S1204",
+        "##### Origin2_n",
+        "```{r fig.height=8, fig.width=8}",
+        "df = d_4_p %>% filter(Patient == 'S1204', level_1 == 'CD4', level_3 == '{{s}}') %>%",
+        "dplyr::select(barcode, Origin2_n, Origin3, Tissue, Source, clonotype)",
+        "PlotRepOverlap2(df, groupby = 'Origin2_n', col_ann = origin2_color_maps)",
+        "```",
+        "",
+        "##### Source",
+        "```{r fig.height=8, fig.width=8}",
+        "PlotRepOverlap2(df, groupby = 'Source')",
+        "```",
+
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+## Session info
+

@@ -1,0 +1,395 @@
+---
+title: "00.Fig.bcells"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "00.Fig.bcells"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = FALSE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+
+# patch
+library(patchwork)
+library(cowplot)
+theme_set(theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+))
+my_theme <- theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+)
+geom.text.size <- 6 / (14 / 5)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+
+# color
+library(ggsci)
+
+# pvclust
+library(pvclust)
+library(dendextend)
+
+# Seurat
+library(Seurat)
+
+# monocle
+library(monocle)
+
+# CytoTRACE
+library(CytoTRACE)
+```
+
+Load code
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+Load rds
+
+```{r load-rds, cache=FALSE}
+srat <- readRDS(here::here("output/04.rm_cells/seurat_bcells.rds"))
+Idents(srat) <- "level_2"
+srat
+```
+
+Load cell meta
+
+```{r load-cell-meta, cache=FALSE, message=FALSE, warning=FALSE}
+cell_meta <- read_csv(here::here("output/04.rm_cells/seurat_bcells.cellmeta.csv")) %>%
+  dplyr::select(barcode, seurat_clusters, level_1, level_2)
+head(cell_meta)
+```
+
+Cell annotations
+
+```{r anno, cache=FALSE}
+df.c2c <- readRDS(here::here("data", "c2c.b.rds"))
+head(df.c2c)
+```
+
+## Classification
+
+```{r fig.width=4, fig.height=3.5, message=FALSE, warning=FALSE}
+markers = list(
+  Naive = filter_features(srat, c("IGHM", "S1PR1", "FCER2", "CD72", "IGHD")),
+  Mem = filter_features(srat, c("CD27", 'CXCR4', 'CXCR5', 'CD40', 'SPIB', 'PAX5')),
+  PC = filter_features(srat, c("IGHA1", "IGHG1", "JCHAIN")),
+  GC = filter_features(srat, c('MME', 'TNFRSF17', 'BCL6')),
+  CD5 = "CD5"
+  )
+
+mat <- AverageExpression(srat,
+  assays = "RNA", features = unlist(markers),
+  slot = "data", verbose = F
+)$RNA
+mat <- log1p(as.matrix(mat))
+# scale
+mat_scale <- pheatmap:::scale_rows(mat)
+
+# color
+x <- ceiling(max(abs(mat_scale)))
+col_fun <- circlize::colorRamp2(c(-x, 0, x), c("#476fa9", "#ffffff", "#ca3226"))
+legend_name <- "Exp."
+
+ht <- ComplexHeatmap::Heatmap(mat_scale,
+  name = legend_name,
+  col = col_fun,
+  cluster_columns = FALSE, cluster_rows = FALSE,
+  show_row_names = TRUE, show_column_names = TRUE,
+  row_names_side = "right",
+  row_names_gp = gpar(fontsize = 6, fontface = "italic"),
+  column_names_gp = gpar(fontsize = 6),
+  column_names_rot = 60,
+  row_split = factor(
+    rep(names(markers), sapply(markers, length)),
+    levels = names(markers)
+  ),
+  row_title_gp = gpar(fontsize = 6),
+  column_split = factor(c(
+    rep(c("Naive"), 8),
+    rep(c("Mem"), 8),
+    rep(c("PC"), 4),
+    rep(c("GCB"), 3),
+    rep(c("DN"), 2),
+    rep(c("CD5"), 2)
+  ),
+  levels = levels(srat$level_1)
+  ),
+  column_title = NULL,
+  left_annotation = rowAnnotation(
+    empty = anno_empty(
+      border = FALSE,
+      width = unit(1, "mm")
+    ),
+    foo = anno_block(
+      gp = gpar(
+        fill = "gray",
+        col = "gray"
+      ),
+      width = unit(0.5, "mm")
+    )
+  ),
+  heatmap_legend_param = list(
+    title_position = "topcenter",
+    direction = "vertical",
+    labels_gp = gpar(fontsize = 6),
+    title_gp = gpar(fontsize = 8),
+    grid_height = unit(3, "mm"),
+    grid_width = unit(3, "mm")
+  )
+)
+
+# draw(ht)
+p.markers.heatmap <- plot_grid(grid.grabExpr(draw(ht)))
+p.markers.heatmap
+
+# save
+saveRDS(p.markers.heatmap, file = here::here("output", DOCNAME, "Fig.markers.heatmap.rds"))
+
+ggsave2(p.markers.heatmap,
+  filename = here::here("output", DOCNAME, "Fig.markers.heatmap.pdf"),
+  height = 3.5, width = 4, device = cairo_pdf
+)
+```
+
+Small
+
+```{r fig.width=3, fig.height=1.8, message=FALSE, warning=FALSE}
+ht <- ComplexHeatmap::Heatmap(mat_scale,
+  name = legend_name,
+  col = col_fun,
+  cluster_columns = FALSE, cluster_rows = FALSE,
+  show_row_names = TRUE, show_column_names = TRUE,
+  row_names_side = "right",
+  row_names_gp = gpar(fontsize = 4, fontface = "italic"),
+  column_names_gp = gpar(fontsize = 4),
+  column_names_rot = 60,
+  row_split = factor(
+    rep(names(markers), sapply(markers, length)),
+    levels = names(markers)
+  ),
+  row_title_gp = gpar(fontsize = 4),
+  column_split = factor(c(
+    rep(c("Naive"), 8),
+    rep(c("Mem"), 8),
+    rep(c("PC"), 4),
+    rep(c("GCB"), 3),
+    rep(c("DN"), 2),
+    rep(c("CD5"), 2)
+  ),
+  levels = levels(srat$level_1)
+  ),
+  column_title = NULL,
+  left_annotation = rowAnnotation(
+    empty = anno_empty(
+      border = FALSE,
+      width = unit(1, "mm")
+    ),
+    foo = anno_block(
+      gp = gpar(
+        fill = "gray",
+        col = "gray"
+      ),
+      width = unit(0.5, "mm")
+    )
+  ),
+  heatmap_legend_param = list(
+    title_position = "topcenter",
+    direction = "vertical",
+    labels_gp = gpar(fontsize = 4),
+    title_gp = gpar(fontsize = 6),
+    grid_height = unit(3, "mm"),
+    grid_width = unit(3, "mm")
+  )
+)
+
+# draw(ht)
+p.markers.heatmap <- plot_grid(grid.grabExpr(draw(ht)))
+p.markers.heatmap
+
+# save
+saveRDS(p.markers.heatmap, file = here::here("output", DOCNAME, "Fig.markers.heatmap.small.rds"))
+
+ggsave2(p.markers.heatmap,
+  filename = here::here("output", DOCNAME, "Fig.markers.heatmap.small.pdf"),
+  height = 1.8, width = 3, device = cairo_pdf
+)
+```
+
+
+## Composition plot
+
+### cellType compositions
+
+```{r cellType-compositions, fig.width=6, fig.height=3.5}
+cluster_byOrigin4 = srat@meta.data %>%
+  group_by(level_2, Origin4) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100)
+cluster_byPatient = srat@meta.data %>%
+  group_by(level_2, Patient) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100)
+cluster_cellNum = srat@meta.data %>%
+  group_by(level_2) %>%
+  summarise(n = n())
+
+p1 = ggplot(cluster_byOrigin4, aes(x = level_2, y = Percent, fill = Origin4)) +
+  geom_bar(stat = "identity", color = 'white') +
+  scale_fill_manual(values = origin4_color_maps) +
+  labs(fill = NULL, x = NULL) +
+  coord_flip() +
+  guides(fill = guide_legend(ncol=1, byrow=TRUE)) +
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_x_discrete(limits=rev) +
+  guides(fill = guide_legend(nrow=2, byrow=TRUE)) +
+  my_theme +
+  theme(legend.position = "top")
+p2 = ggplot(cluster_byPatient, aes(x = level_2, y = Percent, fill = Patient)) +
+  geom_bar(stat = "identity", color = 'white') +
+  scale_fill_manual(values = patient_color_maps) +
+  labs(fill = NULL, x = NULL) +
+  coord_flip() +
+  guides(fill = guide_legend(ncol=1, byrow=TRUE)) +
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_x_discrete(limits=rev) +
+  guides(fill = guide_legend(nrow=2, byrow=TRUE)) +
+  my_theme +
+  theme(legend.position = "top")
+p3 = ggplot(cluster_cellNum, aes(x = level_2, y = log2(n), fill = 'blue')) +
+  geom_bar(stat = "identity", color = '#00008f') +
+  scale_fill_manual(values = '#8f8fb1') +
+  labs(fill = NULL, x = NULL) +
+  coord_flip() +
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_x_discrete(limits=rev) +
+  guides(fill = guide_legend(nrow=2, byrow=TRUE)) +
+  my_theme +
+  theme(legend.position = "top")
+
+p.cellType.comp = p1 + p2 + p3 +
+  plot_layout(ncol = 3)
+p.cellType.comp
+
+ggsave2(p.cellType.comp,
+  filename = here::here("output", DOCNAME, "Fig.cellTypeComposition.pdf"),
+  height = 3.5, width = 6, device=cairo_pdf
+)
+```
+
+
+### Sample composition
+
+Source
+
+```{r sample-compositions, fig.width=8.2, fig.height=3}
+p <- PlotSampleFraction(seurat_obj = srat, "level_2", b_level_2_color)
+p
+
+#saveRDS(p, file = here::here("output", DOCNAME, "Fig.sampleComposition.rds"))
+ggsave2(p,
+  filename = here::here("output", DOCNAME, "Fig.sampleComposition.pdf"),
+  height = 3, width = 8.2, device=cairo_pdf
+)
+```
+
+### Frac. changes by Origin4
+
+```{r overall-fraction-change-Origin4, fig.width=2.5, fig.height=2.5, cache=FALSE}
+tb.fc <- readRDS(here::here("output", "freq.frac_change.b", "tb.fc.rds"))
+
+p.fractionChange <- PlotFracChange(tb.fc, x = "Origin4") +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+p.fractionChange
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.frac_change.byOrigin4.pdf"),
+  height = 2.5, width = 2.5, device = cairo_pdf
+)
+```
+
+```{r fig.width=7, fig.height=5}
+clusters <- unique(cell_meta$level_1)
+
+tb.fc.level_1 = readRDS(here::here("output", "freq.frac_change.b", "tb.fc.level_1.rds"))
+plst <- lapply(clusters, function(x) {
+  PlotFracChange(tb.fc.level_1 %>% filter(level_1 == x),
+    x = "Origin4",
+    title = x
+  )
+})
+plst %>%
+  wrap_plots(ncol = 3, guides = "collect")
+```
+
+## Roe Origin4
+
+
+```{r fig.width=2, fig.height=3.7, warning=FALSE}
+p.roe.b = readRDS(here::here("output", "freq.enrichment_cellType3", "p.roe.b.rds"))
+p.roe.b
+
+ggsave2(p.roe.b, filename = here::here("output", DOCNAME, "Fig.roe_b.pdf"),
+        height = 3.7, width = 2)
+```
+
+
+## Session info
+

@@ -1,0 +1,225 @@
+---
+title: "CytoTRACE.fibroblasts"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME = "CytoTRACE.fibroblasts"
+#dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+    if (before) {
+        print(paste("Start:", Sys.time()))
+        NOW <<- Sys.time()
+    } else {
+        print(paste("Stop:", Sys.time()))
+        print(Sys.time() - NOW)
+    }
+})
+
+knitr::opts_chunk$set(
+    autodep        = TRUE,
+    cache          = FALSE,
+    cache.path     = paste0("cache/", DOCNAME, "/"),
+    cache.lazy     = FALSE, 
+    cache.comments = FALSE,
+    echo           = TRUE,
+    error          = FALSE,
+    fig.align      = "center",
+    fig.width      = 10,
+    fig.height     = 8,
+    message        = FALSE,
+    warning        = FALSE,
+    timeit         = TRUE
+)
+```
+
+Using [CytoTRACE](https://cytotrace.stanford.edu) to predict the differentiation state of cells. Higher CytoTRACE value implies higher developmental potential.
+
+Paper of CytoTRACE: Gulati, G.S., Sikandar, S.S., Wesche, D.J., Manjunath, A., Bharadwaj, A., Berger, M.J., Ilagan, F., Kuo, A.H., Hsieh, R.W., Cai, S., et al. (2020). Single-cell transcriptional diversity is a hallmark of developmental potential. Science 367, 405--411.
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(ggplotify)
+library(ggcorrplot)
+library(cowplot)
+library(patchwork)
+library(ggpubr)
+theme_set(theme_cowplot())
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+
+# color
+library(ggsci)
+
+# Seurat
+library(Seurat)
+```
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+Load rds
+
+```{r load-rds, cache=FALSE}
+seurat = readRDS(here::here('output/04.rm_cells/seurat_fibroblasts.rds'))
+Idents(seurat) <- 'level_3'
+seurat
+```
+
+## CytoTRACE
+
+run CytoTRACE
+
+```{r CytoTRACE, eval=FALSE}
+mat = GetAssayData(seurat, assay = 'RNA', slot = 'counts')
+mat = Matrix::as.matrix(mat)
+result = CytoTRACE(mat, enableFast = F, ncores = 10)
+```
+
+```{r load-CytoTRACE}
+result = readRDS(here::here("output", DOCNAME, "CytoTRACE.res.rds"))
+```
+
+Visualizing CytoTRACE results
+
+```{r vis-CytoTRACE, fig.height=3, fig.width=4}
+meta = FetchData(seurat, vars = c('UMAP_1', 'UMAP_2', 'level_2')) %>%
+  rownames_to_column('barcode')
+
+tibble(barcode = names(result$CytoTRACE),
+       value = result$CytoTRACE) %>%
+  left_join(meta, by = 'barcode') %>%
+  ggplot(aes(x=UMAP_1, y=UMAP_2, color=value)) +
+  geom_point(size = .1) +
+  scale_color_viridis_c() +
+  labs(color = 'Predicted\norder') +
+  theme_cowplot(font_size = 10)
+```
+
+Boxplot
+
+```{r vis-box-CytoTRACE, fig.height=3.5, fig.width=3.5}
+meta = FetchData(seurat, vars = c('UMAP_1', 'UMAP_2', 'level_3')) %>%
+  rownames_to_column('barcode')
+
+tibble(barcode = names(result$CytoTRACE),
+       value = result$CytoTRACE) %>%
+  left_join(meta, by = 'barcode') %>%
+  ggplot(aes(x=reorder(level_3, -value, median), y=value, fill=level_3)) +
+  geom_boxplot(width = .7, outlier.size = .1) +
+  scale_fill_manual(values = fib_level_3_color) +
+  labs(y= 'Predicted order', x= NULL) +
+  theme_cowplot(font_size = 10) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+## pericyte + myCAF
+
+run CytoTRACE
+
+```{r CytoTRACE-pericyte-ec, eval=FALSE}
+seurat_subset = subset(seurat, subset = level_2 %in% c("myCAF", "pericyte"))
+mat = GetAssayData(seurat_subset, assay = 'RNA', slot = 'counts')
+mat = Matrix::as.matrix(mat)
+result = CytoTRACE(mat, enableFast = F, ncores = 10)
+```
+
+```{r load-CytoTRACE-pericyte}
+seurat_subset = subset(seurat, subset = level_2 %in% c("myCAF", "pericyte"))
+result = readRDS(here::here("output", DOCNAME, "myCAF_pericyte.CytoTRACE.res.rds"))
+```
+
+Visualizing CytoTRACE results
+
+```{r vis-CytoTRACE-pericyte-ec, fig.height=3, fig.width=3.5}
+meta = FetchData(seurat_subset, vars = c('UMAP_1', 'UMAP_2', 'level_3')) %>%
+  rownames_to_column('barcode')
+
+tibble(barcode = names(result$CytoTRACE),
+       value = result$CytoTRACE) %>%
+  left_join(meta, by = 'barcode') %>%
+  ggplot(aes(x=UMAP_1, y=UMAP_2, color=value)) +
+  geom_point(size = .1) +
+  scale_color_viridis_c() +
+  labs(color = 'Predicted\norder') +
+  theme_cowplot(font_size = 10)
+```
+
+Boxplot
+
+```{r vis-box-CytoTRACE-pericyte-ec, fig.height=3, fig.width=3}
+tibble(barcode = names(result$CytoTRACE),
+       value = result$CytoTRACE) %>%
+  left_join(meta, by = 'barcode') %>%
+  ggplot(aes(x=reorder(level_3, -value, median), y=value, fill=level_3)) +
+  geom_boxplot(width = .7, outlier.size = .1) +
+  scale_fill_manual(values = fib_level_3_color) +
+  labs(y= 'Predicted order', x= NULL) +
+  theme_cowplot(font_size = 10) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+## NMF + iCAF
+
+run CytoTRACE
+
+```{r CytoTRACE-NMF-ec, eval=FALSE}
+seurat_subset = subset(seurat, subset = level_2 %in% c("NMF", "iCAF"))
+mat = GetAssayData(seurat_subset, assay = 'RNA', slot = 'counts')
+mat = Matrix::as.matrix(mat)
+result = CytoTRACE(mat, enableFast = F, ncores = 10)
+```
+
+```{r load-CytoTRACE-NMF}
+seurat_subset = subset(seurat, subset = level_2 %in% c("NMF", "iCAF"))
+result = readRDS(here::here("output", DOCNAME, "NMF_iCAF.CytoTRACE.res.rds"))
+```
+
+Visualizing CytoTRACE results
+
+```{r vis-CytoTRACE-NMF-ec, fig.height=3, fig.width=3.5}
+meta = FetchData(seurat_subset, vars = c('UMAP_1', 'UMAP_2', 'level_3')) %>%
+  rownames_to_column('barcode')
+
+tibble(barcode = names(result$CytoTRACE),
+       value = result$CytoTRACE) %>%
+  left_join(meta, by = 'barcode') %>%
+  ggplot(aes(x=UMAP_1, y=UMAP_2, color=value)) +
+  geom_point(size = .1) +
+  scale_color_viridis_c() +
+  labs(color = 'Predicted\norder') +
+  theme_cowplot(font_size = 10)
+```
+
+Boxplot
+
+```{r vis-box-CytoTRACE-NMF-ec, fig.height=3, fig.width=3}
+tibble(barcode = names(result$CytoTRACE),
+       value = result$CytoTRACE) %>%
+  left_join(meta, by = 'barcode') %>%
+  ggplot(aes(x=reorder(level_3, -value, median), y=value, fill=level_3)) +
+  geom_boxplot(width = .7, outlier.size = .1) +
+  scale_fill_manual(values = fib_level_3_color) +
+  labs(y= 'Predicted order', x= NULL) +
+  theme_cowplot(font_size = 10) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+## Session info

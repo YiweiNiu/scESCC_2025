@@ -1,0 +1,190 @@
+---
+title: "00.Fig.marker_heatmap"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "00.Fig.marker_heatmap"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = FALSE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+
+# patch
+library(patchwork)
+library(cowplot)
+my_theme <- theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+)
+geom.text.size <- 6 / (14 / 5)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+
+# color
+library(ggsci)
+
+# Seurat
+library(Seurat)
+
+# vis
+#library(scRNAtoolVis)
+```
+
+Load code
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+## Plot
+
+```{r}
+mh_t = readRDS(here::here("output", "00.Fig.tcells", "Fig.markers.heatmap.rds"))
+mh_b = readRDS(here::here("output", "00.Fig.bcells", "Fig.markers.heatmap.rds"))
+mh_mye = readRDS(here::here("output", "00.Fig.myeloid", "Fig.markers.heatmap.rds"))
+mh_epi = readRDS(here::here("output", "00.Fig.epithelia", "Fig.markers.heatmap.rds"))
+mh_fib = readRDS(here::here("output", "00.Fig.fibroblasts", "Fig.markers.canonical.rds"))
+mh_endo = readRDS(here::here("output", "00.Fig.endothelia", "Fig.markers.canonical.rds"))
+```
+
+
+```{r fig.width=4.5, fig.height=4}
+mh_t
+
+ggsave2(mh_t, filename = here::here("output", DOCNAME, "Fig.mh_t.pdf"),
+        height = 4, width = 4.5)
+```
+
+```{r fig.width=4.5, fig.height=3}
+mh_b
+
+ggsave2(mh_b, filename = here::here("output", DOCNAME, "Fig.mh_b.pdf"),
+        height = 3, width = 4.5)
+```
+
+```{r fig.width=4, fig.height=3}
+mh_mye
+
+ggsave2(mh_mye, filename = here::here("output", DOCNAME, "Fig.mh_mye.pdf"),
+        height = 3, width = 4)
+```
+
+```{r fig.width=4.5, fig.height=3}
+mh_epi
+
+ggsave2(mh_epi, filename = here::here("output", DOCNAME, "Fig.mh_epi.pdf"),
+        height = 3, width = 4.5)
+```
+
+```{r fig.width=3.5, fig.height=3.5}
+mh_fib
+
+ggsave2(mh_fib, filename = here::here("output", DOCNAME, "Fig.mh_fib.pdf"),
+        height = 3.5, width = 3.5)
+```
+
+```{r fig.width=3, fig.height=3.5}
+mh_endo
+
+ggsave2(mh_endo, filename = here::here("output", DOCNAME, "Fig.mh_endo.pdf"),
+        height = 3.5, width = 3)
+```
+
+## Plot small
+
+```{r}
+mh_t = readRDS(here::here("output", "00.Fig.tcells", "Fig.markers.heatmap.small.rds"))
+mh_b = readRDS(here::here("output", "00.Fig.bcells", "Fig.markers.heatmap.small.rds"))
+mh_mye = readRDS(here::here("output", "00.Fig.myeloid", "Fig.markers.heatmap.small.rds"))
+mh_fib = readRDS(here::here("output", "00.Fig.fibroblasts", "Fig.markers.canonical.small.rds"))
+mh_endo = readRDS(here::here("output", "00.Fig.endothelia", "Fig.markers.canonical.small.rds"))
+```
+
+```{r fig.width=3, fig.height=2.5}
+mh_t
+
+ggsave2(mh_t, filename = here::here("output", DOCNAME, "Fig.mh_t.small.pdf"),
+        height = 2.5, width = 3)
+```
+
+```{r fig.width=3, fig.height=1.8}
+mh_b
+
+ggsave2(mh_b, filename = here::here("output", DOCNAME, "Fig.mh_b.small.pdf"),
+        height = 1.8, width = 3)
+```
+
+```{r fig.width=3, fig.height=1.8}
+mh_mye
+
+ggsave2(mh_mye, filename = here::here("output", DOCNAME, "Fig.mh_mye.small.pdf"),
+        height = 1.8, width = 3)
+```
+
+```{r fig.width=2, fig.height=2}
+mh_fib
+
+ggsave2(mh_fib, filename = here::here("output", DOCNAME, "Fig.mh_fib.small.pdf"),
+        height = 2, width = 2)
+```
+
+```{r fig.width=2, fig.height=2}
+mh_endo
+
+ggsave2(mh_endo, filename = here::here("output", DOCNAME, "Fig.mh_endo.small.pdf"),
+        height = 2, width = 2)
+```
+
+
+## Session info
+

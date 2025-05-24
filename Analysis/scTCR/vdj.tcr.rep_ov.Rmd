@@ -1,0 +1,605 @@
+---
+title: "vdj.tcr.rep_ov"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME = "vdj.tcr.rep_ov"
+#dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+    if (before) {
+        print(paste("Start:", Sys.time()))
+        NOW <<- Sys.time()
+    } else {
+        print(paste("Stop:", Sys.time()))
+        print(Sys.time() - NOW)
+    }
+})
+
+knitr::opts_chunk$set(
+    autodep        = TRUE,
+    cache          = FALSE,
+    cache.lazy     = FALSE, 
+    cache.comments = FALSE,
+    echo           = TRUE,
+    error          = FALSE,
+    fig.align      = "center",
+    fig.width      = 10,
+    fig.height     = 8,
+    message        = FALSE,
+    warning        = FALSE,
+    timeit         = TRUE
+)
+```
+
+Load packages
+
+```{r libaries, cache = FALSE, warning=FALSE, message=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+
+# patch
+library(patchwork)
+library(cowplot)
+my_theme <- theme_cowplot(font_size=8) +
+  theme(panel.background=element_rect(fill="white"),
+        line = element_line(colour="black", lineend="round"),
+        text = element_text(size=6, colour="black"),
+        plot.title = element_text(size=6),
+        axis.text = element_text(colour="black"),
+        axis.title = element_text(size = 6, colour = "black"),
+        axis.ticks = element_line(colour="black"),
+        axis.ticks.length = unit(.1,"cm"),
+        strip.background = element_blank(),
+        axis.text.x=element_text(angle=45, hjust=1))
+geom.text.size = 6/(14/5)
+```
+
+```{r source, cache = FALSE, message=FALSE, warning=FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+devtools::load_all('/T02Data/niuyw1/Rscir')
+```
+
+分析 TCR 的 clonotype sharing
+
+参考：Yost, K. E., Satpathy, A. T., Wells, D. K., Qi, Y., Wang, C., Kageyama, R., McNamara, K. L., Granja, J. M., Sarin, K. Y., Brown, R. A., Gupta, R. K., Curtis, C., Bucktrout, S. L., Davis, M. M., Chang, A. L. S., & Chang, H. Y. (2019). Clonal replacement of tumor-specific T cells following PD-1 blockade. Nature Medicine, 25(8), 1251–1259. https://doi.org/10.1038/s41591-019-0522-3
+
+## Set up
+
+Load data
+
+```{r load-data, cache=FALSE, message=FALSE, warning=FALSE}
+metadata = read_csv(here::here("output", "04.rm_cells", "seurat_tcells.cellmeta.csv"))
+clones = read_csv('/niuyw-usb-disk/Projects/scESCA/cellranger/TCR/200121_6samples.clonotype_tcr.csv')
+```
+
+Merge metadata with clonotype
+
+```{r merge-meta-clonotypes}
+clones = clones %>%
+  filter(clonotype != 'None') %>%  # cells with alpha-beta pair
+  mutate(clonotype_size = as.numeric(clonotype_size)) %>%
+  mutate(clonal_expansion = case_when(
+    clonotype_size == 1 ~ 'No',
+    TRUE ~ 'Clonal'
+  ))
+
+d_4_p = metadata %>%
+  left_join(clones, by = 'barcode') %>%
+  filter(!is.na(clonotype))
+
+head(d_4_p)
+```
+
+## level_3 {.tabset}
+
+```{r ov-level_3, fig.width=12, fig.height=12}
+PlotRepOverlap(RepOverlap(d_4_p, "level_3"))
+PlotRepOverlap(RepOverlap(d_4_p, "level_3", fraction = F), fraction = F)
+```
+
+### CD4
+
+```{r ov-level_3-cd4, fig.width=6, fig.height=6}
+df = d_4_p %>% filter(level_1 == "CD4")
+PlotRepOverlap(RepOverlap(df, "level_3"))
+PlotRepOverlap(RepOverlap(df, "level_3", fraction = F), fraction = F)
+```
+
+### CD8
+
+```{r ov-level_3-cd8, fig.width=6, fig.height=6}
+df = d_4_p %>% filter(level_1 == "CD8")
+PlotRepOverlap(RepOverlap(df, "level_3"))
+PlotRepOverlap(RepOverlap(df, "level_3", fraction = F), fraction = F)
+```
+
+## Origin2_n {.tabset}
+
+```{r ov-Origin2_n, fig.width=5, fig.height=5}
+PlotRepOverlap(RepOverlap(d_4_p, "Origin2_n"))
+PlotRepOverlap(RepOverlap(d_4_p, "Origin2_n", fraction = F), fraction = F)
+```
+
+CD4
+
+```{r ov-Origin2_n-cd4, fig.width=5, fig.height=5}
+df = d_4_p %>% filter(level_1 == "CD4")
+PlotRepOverlap(RepOverlap(df, "Origin2_n"))
+PlotRepOverlap(RepOverlap(df, "Origin2_n", fraction = F), fraction = F)
+```
+
+CD8
+
+```{r ov-Origin2_n-CD8, fig.width=5, fig.height=5}
+df = d_4_p %>% filter(level_1 == "CD8")
+PlotRepOverlap(RepOverlap(df, "Origin2_n"))
+PlotRepOverlap(RepOverlap(df, "Origin2_n", fraction = F), fraction = F)
+```
+
+By patient
+
+```{r ov-Origin2_n-each-Patient, results = "hide"}
+tmp = unique(d_4_p$Patient)
+src_list <- lapply(tmp, function(s){
+    src <- c(
+        "### {{s}} {.tabset}",
+        "```{r ov-Origin2_n-{{s}}, fig.height=5, fig.width=5}",
+        "df = d_4_p %>% filter(Patient == '{{s}}')",
+        "PlotRepOverlap(RepOverlap(df, 'Origin2_n'))",
+        "PlotRepOverlap(RepOverlap(df, 'Origin2_n', fraction = F), fraction = F)",
+        "```",
+        "",
+        "#### CD4",
+        "```{r ov-Origin2_n-{{s}}-cd4, fig.height=5, fig.width=5}",
+        "df = d_4_p %>% filter(Patient == '{{s}}', level_1 == 'CD4')",
+        "PlotRepOverlap(RepOverlap(df, 'Origin2_n'))",
+        "PlotRepOverlap(RepOverlap(df, 'Origin2_n', fraction = F), fraction = F)",
+        "```",
+        "",
+        "#### CD8",
+        "```{r ov-Origin2_n-{{s}}-cd8, fig.height=5, fig.width=5}",
+        "df = d_4_p %>% filter(Patient == '{{s}}', level_1 == 'CD8')",
+        "PlotRepOverlap(RepOverlap(df, 'Origin2_n'))",
+        "PlotRepOverlap(RepOverlap(df, 'Origin2_n', fraction = F), fraction = F)",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+## Origin4 {.tabset}
+
+```{r ov-Origin4, fig.width=5, fig.height=5}
+PlotRepOverlap(RepOverlap(d_4_p, "Origin4"))
+PlotRepOverlap(RepOverlap(d_4_p, "Origin4", fraction = F), fraction = F)
+```
+
+CD4
+
+```{r ov-Origin4-cd4, fig.width=5, fig.height=5}
+df = d_4_p %>% filter(level_1 == "CD4")
+PlotRepOverlap(RepOverlap(df, "Origin4"))
+PlotRepOverlap(RepOverlap(df, "Origin4", fraction = F), fraction = F)
+```
+
+CD8
+
+```{r ov-Origin4-CD8, fig.width=5, fig.height=5}
+df = d_4_p %>% filter(level_1 == "CD8")
+PlotRepOverlap(RepOverlap(df, "Origin4"))
+PlotRepOverlap(RepOverlap(df, "Origin4", fraction = F), fraction = F)
+```
+
+By patient
+
+```{r ov-Origin4-each-Patient, results = "hide"}
+tmp = unique(d_4_p$Patient)
+src_list <- lapply(tmp, function(s){
+    src <- c(
+        "### {{s}} {.tabset}",
+        "```{r ov-Origin4-{{s}}, fig.height=5, fig.width=5}",
+        "df = d_4_p %>% filter(Patient == '{{s}}')",
+        "PlotRepOverlap(RepOverlap(df, 'Origin4'))",
+        "PlotRepOverlap(RepOverlap(df, 'Origin4', fraction = F), fraction = F)",
+        "```",
+        "",
+        "#### CD4",
+        "```{r ov-Origin4-{{s}}-cd4, fig.height=5, fig.width=5}",
+        "df = d_4_p %>% filter(Patient == '{{s}}', level_1 == 'CD4')",
+        "PlotRepOverlap(RepOverlap(df, 'Origin4'))",
+        "PlotRepOverlap(RepOverlap(df, 'Origin4', fraction = F), fraction = F)",
+        "```",
+        "",
+        "#### CD8",
+        "```{r ov-Origin4-{{s}}-cd8, fig.height=5, fig.width=5}",
+        "df = d_4_p %>% filter(Patient == '{{s}}', level_1 == 'CD8')",
+        "PlotRepOverlap(RepOverlap(df, 'Origin4'))",
+        "PlotRepOverlap(RepOverlap(df, 'Origin4', fraction = F), fraction = F)",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+## Tissue {.tabset}
+
+```{r ov-Tissue, fig.width=5, fig.height=5}
+PlotRepOverlap(RepOverlap(d_4_p, "Tissue"))
+PlotRepOverlap(RepOverlap(d_4_p, "Tissue", fraction = F), fraction = F)
+```
+
+CD4
+
+```{r ov-Tissue-cd4, fig.width=5, fig.height=5}
+df = d_4_p %>% filter(level_1 == "CD4")
+PlotRepOverlap(RepOverlap(df, "Tissue"))
+PlotRepOverlap(RepOverlap(df, "Tissue", fraction = F), fraction = F)
+```
+
+CD8
+
+```{r ov-Tissue-CD8, fig.width=5, fig.height=5}
+df = d_4_p %>% filter(level_1 == "CD8")
+PlotRepOverlap(RepOverlap(df, "Tissue"))
+PlotRepOverlap(RepOverlap(df, "Tissue", fraction = F), fraction = F)
+```
+
+By Patient
+
+```{r ov-Tissue--each-Patient, results = "hide"}
+tmp = unique(d_4_p$Patient)
+src_list <- lapply(tmp, function(s){
+    src <- c(
+        "### {{s}} {.tabset}",
+        "```{r ov-Tissue-{{s}}, fig.height=5, fig.width=5}",
+        "df = d_4_p %>% filter(Patient == '{{s}}')",
+        "PlotRepOverlap(RepOverlap(df, 'Tissue'))",
+        "PlotRepOverlap(RepOverlap(df, 'Tissue', fraction = F), fraction = F)",
+        "```",
+        "",
+        "#### CD4",
+        "```{r ov-Tissue-{{s}}-cd4, fig.height=5, fig.width=5}",
+        "df = d_4_p %>% filter(Patient == '{{s}}', level_1 == 'CD4')",
+        "PlotRepOverlap(RepOverlap(df, 'Tissue'))",
+        "PlotRepOverlap(RepOverlap(df, 'Tissue', fraction = F), fraction = F)",
+        "```",
+        "",
+        "#### CD8",
+        "```{r ov-Tissue-{{s}}-cd8, fig.height=5, fig.width=5}",
+        "df = d_4_p %>% filter(Patient == '{{s}}', level_1 == 'CD8')",
+        "PlotRepOverlap(RepOverlap(df, 'Tissue'))",
+        "PlotRepOverlap(RepOverlap(df, 'Tissue', fraction = F), fraction = F)",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+## Source {.tabset}
+
+```{r ov-Source-each-Patient, results = "hide"}
+tmp = unique(d_4_p$Patient)
+src_list <- lapply(tmp, function(s){
+    src <- c(
+        "### {{s}} {.tabset}",
+        "```{r ov-Source-{{s}}, fig.height=7, fig.width=7}",
+        "df = d_4_p %>% filter(Patient == '{{s}}') %>% mutate(Source = as.character(Source))",
+        "PlotRepOverlap(RepOverlap(df, 'Source'))",
+        "PlotRepOverlap(RepOverlap(df, 'Source', fraction = F), fraction = F)",
+        "```",
+        "",
+        "#### CD4",
+        "```{r ov-Source-{{s}}-cd4, fig.height=7, fig.width=7}",
+        "df = d_4_p %>% filter(Patient == '{{s}}', level_1 == 'CD4') %>% mutate(Source = as.character(Source))",
+        "PlotRepOverlap(RepOverlap(df, 'Source'))",
+        "PlotRepOverlap(RepOverlap(df, 'Source', fraction = F), fraction = F)",
+        "```",
+        "",
+        "#### CD8",
+        "```{r ov-Source-{{s}}-cd8, fig.height=7, fig.width=7}",
+        "df = d_4_p %>% filter(Patient == '{{s}}', level_1 == 'CD8') %>% mutate(Source = as.character(Source))",
+        "PlotRepOverlap(RepOverlap(df, 'Source'))",
+        "PlotRepOverlap(RepOverlap(df, 'Source', fraction = F), fraction = F)",
+        "```",
+        "")
+    #print(src)
+    knitr::knit_expand(text = src)
+})
+
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+## nLN, pLN and Tumor
+
+### CD8
+
+Fraction
+
+```{r nLN-pLN-Tumor-CD8, fig.width=12, fig.height=12}
+df1 = d_4_p %>% filter(Origin2_n == "nLN") %>% filter(level_1 == "CD8")
+df2 = d_4_p %>% filter(Origin2_n == "pLN") %>% filter(level_1 == "CD8")
+df3 = d_4_p %>% filter(Origin2_n == "Tumor") %>% filter(level_1 == "CD8")
+p1 = PlotRepOverlap(RepOverlap(df1, "level_3"), title = "nLN")
+p2 = PlotRepOverlap(RepOverlap(df2, "level_3"), title = "pLN")
+p3 = PlotRepOverlap(RepOverlap(df2, "level_3"), title = "Tumor")
+p1 + p2 + p3 +
+  plot_layout(ncol = 2)
+```
+
+Number
+
+```{r nLN-pLN-Tumor-CD8-num, fig.width=12, fig.height=12}
+df1 = d_4_p %>% filter(Origin2_n == "nLN") %>% filter(level_1 == "CD8")
+df2 = d_4_p %>% filter(Origin2_n == "pLN") %>% filter(level_1 == "CD8")
+df3 = d_4_p %>% filter(Origin2_n == "Tumor") %>% filter(level_1 == "CD8")
+p1 = PlotRepOverlap(RepOverlap(df1, "level_3", fraction = F), fraction = F, title = "nLN")
+p2 = PlotRepOverlap(RepOverlap(df2, "level_3", fraction = F), fraction = F, title = "pLN")
+p3 = PlotRepOverlap(RepOverlap(df2, "level_3", fraction = F), fraction = F, title = "Tumor")
+p1 + p2 + p3 +
+  plot_layout(ncol = 2)
+```
+
+### CD4
+
+Fraction
+
+```{r nLN-pLN-Tumor-CD4, fig.width=12, fig.height=12}
+df1 = d_4_p %>% filter(Origin2_n == "nLN") %>% filter(level_1 == "CD4")
+df2 = d_4_p %>% filter(Origin2_n == "pLN") %>% filter(level_1 == "CD4")
+df3 = d_4_p %>% filter(Origin2_n == "Tumor") %>% filter(level_1 == "CD4")
+p1 = PlotRepOverlap(RepOverlap(df1, "level_3"), title = "nLN")
+p2 = PlotRepOverlap(RepOverlap(df2, "level_3"), title = "pLN")
+p3 = PlotRepOverlap(RepOverlap(df2, "level_3"), title = "Tumor")
+p1 + p2 + p3 +
+  plot_layout(ncol = 2)
+```
+
+Number
+
+```{r nLN-pLN-Tumor-CD4-num, fig.width=12, fig.height=12}
+df1 = d_4_p %>% filter(Origin2_n == "nLN") %>% filter(level_1 == "CD4")
+df2 = d_4_p %>% filter(Origin2_n == "pLN") %>% filter(level_1 == "CD4")
+df3 = d_4_p %>% filter(Origin2_n == "Tumor") %>% filter(level_1 == "CD4")
+p1 = PlotRepOverlap(RepOverlap(df1, "level_3", fraction = F), fraction = F, title = "nLN")
+p2 = PlotRepOverlap(RepOverlap(df2, "level_3", fraction = F), fraction = F, title = "pLN")
+p3 = PlotRepOverlap(RepOverlap(df2, "level_3", fraction = F), fraction = F, title = "Tumor")
+p1 + p2 + p3 +
+  plot_layout(ncol = 2)
+```
+
+## nLN and Tumor of Metastatic-N patients
+
+### CD8
+
+Fraction
+
+```{r, fig.width=12, fig.height=6}
+df1 = d_4_p %>% filter(Origin2_n == "nLN", Metastatic == "N") %>% filter(level_1 == "CD8")
+df3 = d_4_p %>% filter(Origin2_n == "Tumor", Metastatic == "N") %>% filter(level_1 == "CD8")
+p1 = PlotRepOverlap(RepOverlap(df1, "level_3"), title = "nLN")
+p3 = PlotRepOverlap(RepOverlap(df2, "level_3"), title = "Tumor")
+p1 + p3 +
+  plot_layout(ncol = 2)
+```
+
+Number
+
+```{r, fig.width=12, fig.height=6}
+df1 = d_4_p %>% filter(Origin2_n == "nLN", Metastatic == "N") %>% filter(level_1 == "CD8")
+df3 = d_4_p %>% filter(Origin2_n == "Tumor", Metastatic == "N") %>% filter(level_1 == "CD8")
+p1 = PlotRepOverlap(RepOverlap(df1, "level_3", fraction = F), fraction = F, title = "nLN")
+p3 = PlotRepOverlap(RepOverlap(df2, "level_3", fraction = F), fraction = F, title = "Tumor")
+p1 + p3 +
+  plot_layout(ncol = 2)
+```
+
+### CD4
+
+Fraction
+
+```{r, fig.width=12, fig.height=6}
+df1 = d_4_p %>% filter(Origin2_n == "nLN", Metastatic == "N") %>% filter(level_1 == "CD4")
+df3 = d_4_p %>% filter(Origin2_n == "Tumor", Metastatic == "N") %>% filter(level_1 == "CD4")
+p1 = PlotRepOverlap(RepOverlap(df1, "level_3"), title = "nLN")
+p3 = PlotRepOverlap(RepOverlap(df2, "level_3"), title = "Tumor")
+p1 + p3 +
+  plot_layout(ncol = 2)
+```
+
+Number
+
+```{r, fig.width=12, fig.height=6}
+df1 = d_4_p %>% filter(Origin2_n == "nLN", Metastatic == "N") %>% filter(level_1 == "CD4")
+df3 = d_4_p %>% filter(Origin2_n == "Tumor", Metastatic == "N") %>% filter(level_1 == "CD4")
+p1 = PlotRepOverlap(RepOverlap(df1, "level_3", fraction = F), fraction = F, title = "nLN")
+p3 = PlotRepOverlap(RepOverlap(df2, "level_3", fraction = F), fraction = F, title = "Tumor")
+p1 + p3 +
+  plot_layout(ncol = 2)
+```
+
+## nLN, pLN and Tumor of Metastatic-P patients
+
+### CD8
+
+Fraction
+
+```{r, fig.width=12, fig.height=12}
+df1 = d_4_p %>% filter(Origin2_n == "nLN", Metastatic == "P") %>% filter(level_1 == "CD8")
+df2 = d_4_p %>% filter(Origin2_n == "pLN", Metastatic == "P") %>% filter(level_1 == "CD8")
+df3 = d_4_p %>% filter(Origin2_n == "Tumor", Metastatic == "P") %>% filter(level_1 == "CD8")
+p1 = PlotRepOverlap(RepOverlap(df1, "level_3"), title = "nLN")
+p2 = PlotRepOverlap(RepOverlap(df2, "level_3"), title = "pLN")
+p3 = PlotRepOverlap(RepOverlap(df2, "level_3"), title = "Tumor")
+p1 + p2 + p3 +
+  plot_layout(ncol = 2)
+```
+
+Number
+
+```{r, fig.width=12, fig.height=12}
+df1 = d_4_p %>% filter(Origin2_n == "nLN", Metastatic == "P") %>% filter(level_1 == "CD8")
+df2 = d_4_p %>% filter(Origin2_n == "pLN", Metastatic == "P") %>% filter(level_1 == "CD8")
+df3 = d_4_p %>% filter(Origin2_n == "Tumor", Metastatic == "P") %>% filter(level_1 == "CD8")
+p1 = PlotRepOverlap(RepOverlap(df1, "level_3", fraction = F), fraction = F, title = "nLN")
+p2 = PlotRepOverlap(RepOverlap(df2, "level_3", fraction = F), fraction = F, title = "pLN")
+p3 = PlotRepOverlap(RepOverlap(df2, "level_3", fraction = F), fraction = F, title = "Tumor")
+p1 + p2 + p3 +
+  plot_layout(ncol = 2)
+```
+
+### CD4
+
+Fraction
+
+```{r, fig.width=12, fig.height=12}
+df1 = d_4_p %>% filter(Origin2_n == "nLN", Metastatic == "P") %>% filter(level_1 == "CD4")
+df2 = d_4_p %>% filter(Origin2_n == "pLN", Metastatic == "P") %>% filter(level_1 == "CD4")
+df3 = d_4_p %>% filter(Origin2_n == "Tumor", Metastatic == "P") %>% filter(level_1 == "CD4")
+p1 = PlotRepOverlap(RepOverlap(df1, "level_3"), title = "nLN")
+p2 = PlotRepOverlap(RepOverlap(df2, "level_3"), title = "pLN")
+p3 = PlotRepOverlap(RepOverlap(df2, "level_3"), title = "Tumor")
+p1 + p2 + p3 +
+  plot_layout(ncol = 2)
+```
+
+Number
+
+```{r, fig.width=12, fig.height=12}
+df1 = d_4_p %>% filter(Origin2_n == "nLN", Metastatic == "P") %>% filter(level_1 == "CD4")
+df2 = d_4_p %>% filter(Origin2_n == "pLN", Metastatic == "P") %>% filter(level_1 == "CD4")
+df3 = d_4_p %>% filter(Origin2_n == "Tumor", Metastatic == "P") %>% filter(level_1 == "CD4")
+p1 = PlotRepOverlap(RepOverlap(df1, "level_3", fraction = F), fraction = F, title = "nLN")
+p2 = PlotRepOverlap(RepOverlap(df2, "level_3", fraction = F), fraction = F, title = "pLN")
+p3 = PlotRepOverlap(RepOverlap(df2, "level_3", fraction = F), fraction = F, title = "Tumor")
+p1 + p2 + p3 +
+  plot_layout(ncol = 2)
+```
+
+## Compare between tissue {.tabset}
+
+### prePBMC and postPBMC
+
+#### CD8
+
+Fraction
+
+```{r prePBMC-postPBMC-CD8, fig.width=10, fig.height=5}
+df1 = d_4_p %>% filter(Origin2_n == "prePBMC") %>% filter(level_1 == "CD8")
+df2 = d_4_p %>% filter(Origin2_n == "postPBMC") %>% filter(level_1 == "CD8")
+p1 = PlotRepOverlap(RepOverlap(df1, "level_3"), title = "prePBMC")
+p2 = PlotRepOverlap(RepOverlap(df2, "level_3"), title = "postPBMC")
+p1 + p2
+```
+
+Number
+
+```{r prePBMC-postPBMC-CD8-num, fig.width=10, fig.height=5}
+df1 = d_4_p %>% filter(Origin2_n == "prePBMC") %>% filter(level_1 == "CD8")
+df2 = d_4_p %>% filter(Origin2_n == "postPBMC") %>% filter(level_1 == "CD8")
+p1 = PlotRepOverlap(RepOverlap(df1, "level_3", fraction = F), fraction = F, title = "prePBMC")
+p2 = PlotRepOverlap(RepOverlap(df2, "level_3", fraction = F), fraction = F, title = "postPBMC")
+p1 + p2
+```
+
+#### CD4
+
+Fraction
+
+```{r prePBMC-postPBMC-CD4, fig.width=10, fig.height=5}
+df1 = d_4_p %>% filter(Origin2_n == "prePBMC") %>% filter(level_1 == "CD4")
+df2 = d_4_p %>% filter(Origin2_n == "postPBMC") %>% filter(level_1 == "CD4")
+p1 = PlotRepOverlap(RepOverlap(df1, "level_3"), title = "prePBMC")
+p2 = PlotRepOverlap(RepOverlap(df2, "level_3"), title = "postPBMC")
+p1 + p2
+```
+
+Number
+
+```{r prePBMC-postPBMC-CD4-num, fig.width=10, fig.height=5}
+df1 = d_4_p %>% filter(Origin2_n == "prePBMC") %>% filter(level_1 == "CD4")
+df2 = d_4_p %>% filter(Origin2_n == "postPBMC") %>% filter(level_1 == "CD4")
+p1 = PlotRepOverlap(RepOverlap(df1, "level_3", fraction = F), fraction = F, title = "prePBMC")
+p2 = PlotRepOverlap(RepOverlap(df2, "level_3", fraction = F), fraction = F, title = "postPBMC")
+p1 + p2
+```
+
+### nLN and pLN
+
+#### CD8
+
+Fraction
+
+```{r nLN-pLN-CD8, fig.width=12, fig.height=6}
+df1 = d_4_p %>% filter(Origin2_n == "nLN") %>% filter(level_1 == "CD8")
+df2 = d_4_p %>% filter(Origin2_n == "pLN") %>% filter(level_1 == "CD8")
+p1 = PlotRepOverlap(RepOverlap(df1, "level_3"), title = "nLN")
+p2 = PlotRepOverlap(RepOverlap(df2, "level_3"), title = "pLN")
+p1 + p2
+```
+
+Number
+
+```{r nLN-pLN-CD8-num, fig.width=12, fig.height=6}
+df1 = d_4_p %>% filter(Origin2_n == "nLN") %>% filter(level_1 == "CD8")
+df2 = d_4_p %>% filter(Origin2_n == "pLN") %>% filter(level_1 == "CD8")
+p1 = PlotRepOverlap(RepOverlap(df1, "level_3", fraction = F), fraction = F, title = "nLN")
+p2 = PlotRepOverlap(RepOverlap(df2, "level_3", fraction = F), fraction = F, title = "pLN")
+p1 + p2
+```
+
+#### CD4
+
+Fraction
+
+```{r nLN-pLN-CD4, fig.width=12, fig.height=6}
+df1 = d_4_p %>% filter(Origin2_n == "nLN") %>% filter(level_1 == "CD4")
+df2 = d_4_p %>% filter(Origin2_n == "pLN") %>% filter(level_1 == "CD4")
+p1 = PlotRepOverlap(RepOverlap(df1, "level_3"), title = "nLN")
+p2 = PlotRepOverlap(RepOverlap(df2, "level_3"), title = "pLN")
+p1 + p2
+```
+
+Number
+
+```{r nLN-pLN-CD4-num, fig.width=12, fig.height=6}
+df1 = d_4_p %>% filter(Origin2_n == "nLN") %>% filter(level_1 == "CD4")
+df2 = d_4_p %>% filter(Origin2_n == "pLN") %>% filter(level_1 == "CD4")
+p1 = PlotRepOverlap(RepOverlap(df1, "level_3", fraction = F), fraction = F, title = "nLN")
+p2 = PlotRepOverlap(RepOverlap(df2, "level_3", fraction = F), fraction = F, title = "pLN")
+p1 + p2
+```
+
+
+## Session info
+

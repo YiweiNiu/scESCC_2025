@@ -1,0 +1,689 @@
+---
+title: "enrichment.ALL.cellType3"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "enrichment.ALL.cellType3"
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = TRUE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = TRUE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+Enrichment of all cellType3
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(EnvStats)
+library(ggcorrplot)
+library(pheatmap)
+library(ggpubr)
+library(ggplotify)
+library(ggrepel)
+
+# patch
+library(cowplot)
+theme_set(theme_cowplot(
+  font_size = 12,
+  rel_small = 10 / 12,
+  rel_tiny = 8 / 12,
+  rel_large = 12 / 12,
+  font_family = "Arial"
+))
+library(patchwork)
+
+# color
+library(ggsci)
+
+# fonts
+library(extrafont)
+# font_import()
+# font_import(paths = "/T02Data/niuyw/.local/share/fonts")
+loadfonts(device = "pdf", quiet = TRUE)
+
+# Seurat
+library(Seurat)
+```
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+Load metadata
+
+```{r load-rds, cache=FALSE, message=FALSE, warning=FALSE}
+metadata = read_csv(here::here("output/04.rm_cells/seurat.cellmeta.csv"))
+sam_info = read_csv(here::here('data/sample_info.2.csv'))
+```
+
+## Plot
+
+### Origin2_n (enrichment score + cell number) {.tabset}
+
+#### All cells
+
+With cell number (row order by number)
+
+```{r fig.width=4, fig.height=15, warning=FALSE}
+cluster_cellNum <- metadata %>%
+  group_by(cellType3) %>%
+  summarise(cluster.cell_num = n()) %>%
+  mutate(cluster.cell_num = as.numeric(cluster.cell_num))
+
+origin2_CellNum <- sam_info %>%
+  group_by(Origin2_n) %>%
+  summarise(origin.cell_num = sum(cell.filtered)) %>%
+  mutate(origin.cell_num = as.numeric(origin.cell_num)) %>%
+  mutate(total = sum(origin.cell_num)) %>%
+  mutate(total = as.numeric(total))
+
+cluster_byOrigin2 <- metadata %>%
+  group_by(cellType3, Origin2_n) %>%
+  summarise(o = n()) %>%
+  mutate(o = as.numeric(o))
+
+# add origins not existing
+tmp <- setdiff(unique(metadata$Origin2_n), cluster_byOrigin2$Origin2_n)
+if (length(tmp) > 0) {
+  for (t in tmp) {
+    x <- tibble(cellType3 = unique(cluster_cellNum$cellType3), Origin2_n = t, o = 0)
+    cluster_byOrigin2 <- bind_rows(cluster_byOrigin2, x)
+  }
+}
+
+r_oe <- cluster_byOrigin2 %>%
+  left_join(origin2_CellNum, by = "Origin2_n") %>%
+  left_join(cluster_cellNum, by = "cellType3") %>%
+  mutate(e = (origin.cell_num * cluster.cell_num) / total) %>%
+  mutate(r = o / e) %>%
+  dplyr::select(cellType3, Origin2_n, r) %>%
+  spread(Origin2_n, r, fill = 0) %>%
+  column_to_rownames("cellType3")
+
+# order
+tmp.df = r_oe %>%
+  rownames_to_column("cellType3") %>%
+  arrange(PBMC1, PBMC2, LN_N, LN_P, Normal, Adjacent, Tumor)
+
+# data for plot
+d4p <- r_oe %>%
+  rownames_to_column("cellType3") %>%
+  pivot_longer(cols = !cellType3, names_to = "Origin2_n") %>%
+  mutate(
+    Origin2_n = factor(Origin2_n, levels = c(
+      "PBMC1", "PBMC2",
+      "LN_N", "LN_P",
+      "Normal", "Adjacent",
+      "Tumor"
+    )),
+    cellType3 = factor(cellType3, levels = tmp.df$cellType3)
+  )
+
+# cell Num
+df.cell_num <- cluster_byOrigin2
+
+# plot
+ggplot(d4p, aes(x = Origin2_n, y = cellType3, fill = value)) +
+  geom_tile() +
+  geom_point(
+    data = df.cell_num,
+    aes(x = Origin2_n, y = cellType3, size = o),
+    shape = 1,
+    inherit.aes = FALSE
+  ) +
+  scale_x_discrete(position = "top") +
+  scale_y_discrete(position = "right") +
+  scale_fill_gradient2(
+    midpoint = 1,
+    low = "blue", mid = "white", high = "red",
+    name = expression(R[O / E])
+  ) +
+  scale_size(range = c(1, 3)) +
+  labs(size = "Cells") +
+  theme_cowplot(font_size = 8) +
+  theme(
+    axis.text.x = element_text(angle = 60, hjust = 0),
+    axis.title = element_blank(),
+    axis.line = element_blank(),
+    axis.ticks = element_blank(),
+    legend.position = "right",
+    text = element_text(size = 6)
+  )
+```
+
+#### Immune
+
+With cell number (row order by number)
+
+```{r fig.width=4, fig.height=10, warning=FALSE}
+cluster_cellNum <- metadata %>%
+  filter(cellType %in% c("T cells", "B cells", "Myeloid", "Platelets")) %>%
+  group_by(cellType3) %>%
+  summarise(cluster.cell_num = n()) %>%
+  mutate(cluster.cell_num = as.numeric(cluster.cell_num))
+
+origin2_CellNum <- sam_info %>%
+  group_by(Origin2_n) %>%
+  summarise(origin.cell_num = sum(cell.filtered)) %>%
+  mutate(origin.cell_num = as.numeric(origin.cell_num)) %>%
+  mutate(total = sum(origin.cell_num)) %>%
+  mutate(total = as.numeric(total))
+
+cluster_byOrigin2 <- metadata %>%
+  filter(cellType %in% c("T cells", "B cells", "Myeloid", "Platelets")) %>%
+  group_by(cellType3, Origin2_n) %>%
+  summarise(o = n()) %>%
+  mutate(o = as.numeric(o))
+
+# add origins not existing
+tmp <- setdiff(unique(metadata$Origin2_n), cluster_byOrigin2$Origin2_n)
+if (length(tmp) > 0) {
+  for (t in tmp) {
+    x <- tibble(cellType3 = unique(cluster_cellNum$cellType3), Origin2_n = t, o = 0)
+    cluster_byOrigin2 <- bind_rows(cluster_byOrigin2, x)
+  }
+}
+
+r_oe <- cluster_byOrigin2 %>%
+  left_join(origin2_CellNum, by = "Origin2_n") %>%
+  left_join(cluster_cellNum, by = "cellType3") %>%
+  mutate(e = (origin.cell_num * cluster.cell_num) / total) %>%
+  mutate(r = o / e) %>%
+  dplyr::select(cellType3, Origin2_n, r) %>%
+  spread(Origin2_n, r, fill = 0) %>%
+  column_to_rownames("cellType3")
+
+# order
+tmp.df = r_oe %>%
+  rownames_to_column("cellType3") %>%
+  arrange(PBMC1, PBMC2, LN_N, LN_P, Normal, Adjacent, Tumor)
+
+# data for plot
+d4p <- r_oe %>%
+  rownames_to_column("cellType3") %>%
+  pivot_longer(cols = !cellType3, names_to = "Origin2_n") %>%
+  mutate(
+    Origin2_n = factor(Origin2_n, levels = c(
+      "PBMC1", "PBMC2",
+      "LN_N", "LN_P",
+      "Normal", "Adjacent",
+      "Tumor"
+    )),
+    cellType3 = factor(cellType3, levels = tmp.df$cellType3)
+  )
+
+# cell Num
+df.cell_num <- cluster_byOrigin2
+
+# plot
+p = ggplot(d4p, aes(x = Origin2_n, y = cellType3, fill = value)) +
+  geom_tile() +
+  geom_point(
+    data = df.cell_num,
+    aes(x = Origin2_n, y = cellType3, size = o),
+    shape = 1,
+    inherit.aes = FALSE
+  ) +
+  scale_x_discrete(position = "top") +
+  scale_y_discrete(position = "right") +
+  scale_fill_gradient2(
+    midpoint = 1,
+    low = "blue", mid = "white", high = "red",
+    name = expression(R[O / E])
+  ) +
+  scale_size(range = c(1, 3)) +
+  labs(size = "Cells") +
+  theme_cowplot(font_size = 8) +
+  theme(
+    axis.text.x = element_text(angle = 60, hjust = 0),
+    axis.title = element_blank(),
+    axis.line = element_blank(),
+    axis.ticks = element_blank(),
+    legend.position = "right",
+    text = element_text(size = 6)
+  )
+p
+```
+
+#### Non-immune
+
+With cell number (row order by number)
+
+```{r fig.width=4, fig.height=8, warning=FALSE}
+cluster_cellNum <- metadata %>%
+  filter(!(cellType %in% c("T cells", "B cells", "Myeloid", "Platelets"))) %>%
+  group_by(cellType3) %>%
+  summarise(cluster.cell_num = n()) %>%
+  mutate(cluster.cell_num = as.numeric(cluster.cell_num))
+
+origin2_CellNum <- sam_info %>%
+  group_by(Origin2_n) %>%
+  summarise(origin.cell_num = sum(cell.filtered)) %>%
+  mutate(origin.cell_num = as.numeric(origin.cell_num)) %>%
+  mutate(total = sum(origin.cell_num)) %>%
+  mutate(total = as.numeric(total))
+
+cluster_byOrigin2 <- metadata %>%
+  filter(!(cellType %in% c("T cells", "B cells", "Myeloid", "Platelets"))) %>%
+  group_by(cellType3, Origin2_n) %>%
+  summarise(o = n()) %>%
+  mutate(o = as.numeric(o))
+
+# add origins not existing
+tmp <- setdiff(unique(metadata$Origin2_n), cluster_byOrigin2$Origin2_n)
+if (length(tmp) > 0) {
+  for (t in tmp) {
+    x <- tibble(cellType3 = unique(cluster_cellNum$cellType3), Origin2_n = t, o = 0)
+    cluster_byOrigin2 <- bind_rows(cluster_byOrigin2, x)
+  }
+}
+
+r_oe <- cluster_byOrigin2 %>%
+  left_join(origin2_CellNum, by = "Origin2_n") %>%
+  left_join(cluster_cellNum, by = "cellType3") %>%
+  mutate(e = (origin.cell_num * cluster.cell_num) / total) %>%
+  mutate(r = o / e) %>%
+  dplyr::select(cellType3, Origin2_n, r) %>%
+  spread(Origin2_n, r, fill = 0) %>%
+  column_to_rownames("cellType3")
+
+# order
+tmp.df = r_oe %>%
+  rownames_to_column("cellType3") %>%
+  arrange(PBMC1, PBMC2, LN_N, LN_P, Normal, Adjacent, Tumor)
+
+# data for plot
+d4p <- r_oe %>%
+  rownames_to_column("cellType3") %>%
+  pivot_longer(cols = !cellType3, names_to = "Origin2_n") %>%
+  mutate(
+    Origin2_n = factor(Origin2_n, levels = c(
+      "PBMC1", "PBMC2",
+      "LN_N", "LN_P",
+      "Normal", "Adjacent",
+      "Tumor"
+    )),
+    cellType3 = factor(cellType3, levels = tmp.df$cellType3)
+  )
+
+# cell Num
+df.cell_num <- cluster_byOrigin2
+
+# plot
+p = ggplot(d4p, aes(x = Origin2_n, y = cellType3, fill = value)) +
+  geom_tile() +
+  geom_point(
+    data = df.cell_num,
+    aes(x = Origin2_n, y = cellType3, size = o),
+    shape = 1,
+    inherit.aes = FALSE
+  ) +
+  scale_x_discrete(position = "top") +
+  scale_y_discrete(position = "right") +
+  scale_fill_gradient2(
+    midpoint = 1,
+    low = "blue", mid = "white", high = "red",
+    name = expression(R[O / E])
+  ) +
+  scale_size(range = c(1, 3)) +
+  labs(size = "Cells") +
+  theme_cowplot(font_size = 8) +
+  theme(
+    axis.text.x = element_text(angle = 60, hjust = 0),
+    axis.title = element_blank(),
+    axis.line = element_blank(),
+    axis.ticks = element_blank(),
+    legend.position = "right",
+    text = element_text(size = 6)
+  )
+p
+```
+
+### Origin2_n (enrichment score + % lineage cell) {.tabset}
+
+#### All cells
+
+With cell number (row order by number)
+
+```{r fig.width=4, fig.height=15, warning=FALSE}
+cluster_cellNum <- metadata %>%
+  group_by(cellType3) %>%
+  summarise(cluster.cell_num = n()) %>%
+  mutate(cluster.cell_num = as.numeric(cluster.cell_num))
+
+origin2_CellNum <- sam_info %>%
+  group_by(Origin2_n) %>%
+  summarise(origin.cell_num = sum(cell.filtered)) %>%
+  mutate(origin.cell_num = as.numeric(origin.cell_num)) %>%
+  mutate(total = sum(origin.cell_num)) %>%
+  mutate(total = as.numeric(total))
+
+cluster_byOrigin2 <- metadata %>%
+  group_by(cellType3, Origin2_n) %>%
+  summarise(o = n()) %>%
+  mutate(o = as.numeric(o))
+
+# add origins not existing
+tmp <- setdiff(unique(metadata$Origin2_n), cluster_byOrigin2$Origin2_n)
+if (length(tmp) > 0) {
+  for (t in tmp) {
+    x <- tibble(cellType3 = unique(cluster_cellNum$cellType3), Origin2_n = t, o = 0)
+    cluster_byOrigin2 <- bind_rows(cluster_byOrigin2, x)
+  }
+}
+
+r_oe <- cluster_byOrigin2 %>%
+  left_join(origin2_CellNum, by = "Origin2_n") %>%
+  left_join(cluster_cellNum, by = "cellType3") %>%
+  mutate(e = (origin.cell_num * cluster.cell_num) / total) %>%
+  mutate(r = o / e) %>%
+  dplyr::select(cellType3, Origin2_n, r) %>%
+  spread(Origin2_n, r, fill = 0) %>%
+  column_to_rownames("cellType3")
+
+# order
+tmp.df = r_oe %>%
+  rownames_to_column("cellType3") %>%
+  arrange(PBMC1, PBMC2, LN_N, LN_P, Normal, Adjacent, Tumor)
+
+# data for plot
+d4p <- r_oe %>%
+  rownames_to_column("cellType3") %>%
+  pivot_longer(cols = !cellType3, names_to = "Origin2_n") %>%
+  mutate(
+    Origin2_n = factor(Origin2_n, levels = c(
+      "PBMC1", "PBMC2",
+      "LN_N", "LN_P",
+      "Normal", "Adjacent",
+      "Tumor"
+    )),
+    cellType3 = factor(cellType3, levels = tmp.df$cellType3)
+  )
+
+# % lineage prop
+a = metadata %>%
+  group_by(cellType3, cellType, Origin2_n) %>%
+  summarise(cellType3.cell_num = n()) %>%
+  mutate(cellType3.cell_num = as.numeric(cellType3.cell_num))
+b = metadata %>%
+  group_by(cellType) %>%
+  summarise(cellType.cell_num = n()) %>%
+  mutate(cellType.cell_num = as.numeric(cellType.cell_num))
+df.lineage_prop = a %>%
+  left_join(b, by = "cellType") %>%
+  mutate(lineage.prop = cellType3.cell_num*100/cellType.cell_num)
+
+# plot
+ggplot(d4p, aes(x = Origin2_n, y = cellType3, fill = value)) +
+  geom_tile() +
+  geom_point(
+    data = df.lineage_prop,
+    aes(x = Origin2_n, y = cellType3, size = lineage.prop),
+    shape = 1,
+    inherit.aes = FALSE
+  ) +
+  scale_x_discrete(position = "top") +
+  scale_y_discrete(position = "right") +
+  scale_fill_gradient2(
+    midpoint = 1,
+    low = "blue", mid = "white", high = "red",
+    name = expression(R[O / E])
+  ) +
+  scale_size(range = c(1, 3)) +
+  labs(size = "% lineage") +
+  theme_cowplot(font_size = 8) +
+  theme(
+    axis.text.x = element_text(angle = 60, hjust = 0),
+    axis.title = element_blank(),
+    axis.line = element_blank(),
+    axis.ticks = element_blank(),
+    legend.position = "right",
+    text = element_text(size = 6)
+  )
+```
+
+#### Immune
+
+With cell number (row order by number)
+
+```{r fig.width=4, fig.height=10, warning=FALSE}
+cluster_cellNum <- metadata %>%
+  filter(cellType %in% c("T cells", "B cells", "Myeloid", "Platelets")) %>%
+  group_by(cellType3) %>%
+  summarise(cluster.cell_num = n()) %>%
+  mutate(cluster.cell_num = as.numeric(cluster.cell_num))
+
+origin2_CellNum <- sam_info %>%
+  group_by(Origin2_n) %>%
+  summarise(origin.cell_num = sum(cell.filtered)) %>%
+  mutate(origin.cell_num = as.numeric(origin.cell_num)) %>%
+  mutate(total = sum(origin.cell_num)) %>%
+  mutate(total = as.numeric(total))
+
+cluster_byOrigin2 <- metadata %>%
+  filter(cellType %in% c("T cells", "B cells", "Myeloid", "Platelets")) %>%
+  group_by(cellType3, Origin2_n) %>%
+  summarise(o = n()) %>%
+  mutate(o = as.numeric(o))
+
+# add origins not existing
+tmp <- setdiff(unique(metadata$Origin2_n), cluster_byOrigin2$Origin2_n)
+if (length(tmp) > 0) {
+  for (t in tmp) {
+    x <- tibble(cellType3 = unique(cluster_cellNum$cellType3), Origin2_n = t, o = 0)
+    cluster_byOrigin2 <- bind_rows(cluster_byOrigin2, x)
+  }
+}
+
+r_oe <- cluster_byOrigin2 %>%
+  left_join(origin2_CellNum, by = "Origin2_n") %>%
+  left_join(cluster_cellNum, by = "cellType3") %>%
+  mutate(e = (origin.cell_num * cluster.cell_num) / total) %>%
+  mutate(r = o / e) %>%
+  dplyr::select(cellType3, Origin2_n, r) %>%
+  spread(Origin2_n, r, fill = 0) %>%
+  column_to_rownames("cellType3")
+
+# order
+tmp.df = r_oe %>%
+  rownames_to_column("cellType3") %>%
+  arrange(PBMC1, PBMC2, LN_N, LN_P, Normal, Adjacent, Tumor)
+
+# data for plot
+d4p <- r_oe %>%
+  rownames_to_column("cellType3") %>%
+  pivot_longer(cols = !cellType3, names_to = "Origin2_n") %>%
+  mutate(
+    Origin2_n = factor(Origin2_n, levels = c(
+      "PBMC1", "PBMC2",
+      "LN_N", "LN_P",
+      "Normal", "Adjacent",
+      "Tumor"
+    )),
+    cellType3 = factor(cellType3, levels = tmp.df$cellType3)
+  )
+
+# % lineage prop
+a = metadata %>%
+  filter(cellType %in% c("T cells", "B cells", "Myeloid", "Platelets")) %>%
+  group_by(cellType3, cellType, Origin2_n) %>%
+  summarise(cellType3.cell_num = n()) %>%
+  mutate(cellType3.cell_num = as.numeric(cellType3.cell_num))
+b = metadata %>%
+  filter(cellType %in% c("T cells", "B cells", "Myeloid", "Platelets")) %>%
+  group_by(cellType) %>%
+  summarise(cellType.cell_num = n()) %>%
+  mutate(cellType.cell_num = as.numeric(cellType.cell_num))
+df.lineage_prop = a %>%
+  left_join(b, by = "cellType") %>%
+  mutate(lineage.prop = cellType3.cell_num*100/cellType.cell_num)
+
+# plot
+ggplot(d4p, aes(x = Origin2_n, y = cellType3, fill = value)) +
+  geom_tile() +
+  geom_point(
+    data = df.lineage_prop,
+    aes(x = Origin2_n, y = cellType3, size = lineage.prop),
+    shape = 1,
+    inherit.aes = FALSE
+  ) +
+  scale_x_discrete(position = "top") +
+  scale_y_discrete(position = "right") +
+  scale_fill_gradient2(
+    midpoint = 1,
+    low = "blue", mid = "white", high = "red",
+    name = expression(R[O / E])
+  ) +
+  scale_size(range = c(1, 3)) +
+  labs(size = "% lineage") +
+  theme_cowplot(font_size = 8) +
+  theme(
+    axis.text.x = element_text(angle = 60, hjust = 0),
+    axis.title = element_blank(),
+    axis.line = element_blank(),
+    axis.ticks = element_blank(),
+    legend.position = "right",
+    text = element_text(size = 6)
+  )
+```
+
+#### Non-immune
+
+With cell number (row order by number)
+
+```{r fig.width=4, fig.height=8, warning=FALSE}
+cluster_cellNum <- metadata %>%
+  filter(!(cellType %in% c("T cells", "B cells", "Myeloid", "Platelets"))) %>%
+  group_by(cellType3) %>%
+  summarise(cluster.cell_num = n()) %>%
+  mutate(cluster.cell_num = as.numeric(cluster.cell_num))
+
+origin2_CellNum <- sam_info %>%
+  group_by(Origin2_n) %>%
+  summarise(origin.cell_num = sum(cell.filtered)) %>%
+  mutate(origin.cell_num = as.numeric(origin.cell_num)) %>%
+  mutate(total = sum(origin.cell_num)) %>%
+  mutate(total = as.numeric(total))
+
+cluster_byOrigin2 <- metadata %>%
+  filter(!(cellType %in% c("T cells", "B cells", "Myeloid", "Platelets"))) %>%
+  group_by(cellType3, Origin2_n) %>%
+  summarise(o = n()) %>%
+  mutate(o = as.numeric(o))
+
+# add origins not existing
+tmp <- setdiff(unique(metadata$Origin2_n), cluster_byOrigin2$Origin2_n)
+if (length(tmp) > 0) {
+  for (t in tmp) {
+    x <- tibble(cellType3 = unique(cluster_cellNum$cellType3), Origin2_n = t, o = 0)
+    cluster_byOrigin2 <- bind_rows(cluster_byOrigin2, x)
+  }
+}
+
+r_oe <- cluster_byOrigin2 %>%
+  left_join(origin2_CellNum, by = "Origin2_n") %>%
+  left_join(cluster_cellNum, by = "cellType3") %>%
+  mutate(e = (origin.cell_num * cluster.cell_num) / total) %>%
+  mutate(r = o / e) %>%
+  dplyr::select(cellType3, Origin2_n, r) %>%
+  spread(Origin2_n, r, fill = 0) %>%
+  column_to_rownames("cellType3")
+
+# order
+tmp.df = r_oe %>%
+  rownames_to_column("cellType3") %>%
+  arrange(PBMC1, PBMC2, LN_N, LN_P, Normal, Adjacent, Tumor)
+
+# data for plot
+d4p <- r_oe %>%
+  rownames_to_column("cellType3") %>%
+  pivot_longer(cols = !cellType3, names_to = "Origin2_n") %>%
+  mutate(
+    Origin2_n = factor(Origin2_n, levels = c(
+      "PBMC1", "PBMC2",
+      "LN_N", "LN_P",
+      "Normal", "Adjacent",
+      "Tumor"
+    )),
+    cellType3 = factor(cellType3, levels = tmp.df$cellType3)
+  )
+
+# % lineage prop
+a = metadata %>%
+  filter(!(cellType %in% c("T cells", "B cells", "Myeloid", "Platelets"))) %>%
+  group_by(cellType3, cellType, Origin2_n) %>%
+  summarise(cellType3.cell_num = n()) %>%
+  mutate(cellType3.cell_num = as.numeric(cellType3.cell_num))
+b = metadata %>%
+  filter(!(cellType %in% c("T cells", "B cells", "Myeloid", "Platelets"))) %>%
+  group_by(cellType) %>%
+  summarise(cellType.cell_num = n()) %>%
+  mutate(cellType.cell_num = as.numeric(cellType.cell_num))
+df.lineage_prop = a %>%
+  left_join(b, by = "cellType") %>%
+  mutate(lineage.prop = cellType3.cell_num*100/cellType.cell_num)
+
+# plot
+ggplot(d4p, aes(x = Origin2_n, y = cellType3, fill = value)) +
+  geom_tile() +
+  geom_point(
+    data = df.lineage_prop,
+    aes(x = Origin2_n, y = cellType3, size = lineage.prop),
+    shape = 1,
+    inherit.aes = FALSE
+  ) +
+  scale_x_discrete(position = "top") +
+  scale_y_discrete(position = "right") +
+  scale_fill_gradient2(
+    midpoint = 1,
+    low = "blue", mid = "white", high = "red",
+    name = expression(R[O / E])
+  ) +
+  scale_size(range = c(1, 3)) +
+  labs(size = "% lineage") +
+  theme_cowplot(font_size = 8) +
+  theme(
+    axis.text.x = element_text(angle = 60, hjust = 0),
+    axis.title = element_blank(),
+    axis.line = element_blank(),
+    axis.ticks = element_blank(),
+    legend.position = "right",
+    text = element_text(size = 6)
+  )
+```
+
+## Session
+

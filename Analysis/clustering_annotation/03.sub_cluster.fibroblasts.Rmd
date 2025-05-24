@@ -1,0 +1,298 @@
+---
+title: "03.sub_cluster.fibroblasts"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r knitr, include = FALSE}
+DOCNAME = "03.sub_cluster.fibroblasts"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+    if (before) {
+        print(paste("Start:", Sys.time()))
+        NOW <<- Sys.time()
+    } else {
+        print(paste("Stop:", Sys.time()))
+        print(Sys.time() - NOW)
+    }
+})
+
+knitr::opts_chunk$set(
+    autodep        = TRUE,
+    cache          = TRUE,
+    cache.path     = paste0("cache/", DOCNAME, "/"),
+    cache.lazy     = FALSE, 
+    cache.comments = FALSE,
+    echo           = TRUE,
+    error          = FALSE,
+    fig.align      = "center",
+    fig.width      = 10,
+    fig.height     = 8,
+    message        = FALSE,
+    warning        = FALSE,
+    timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(cowplot)
+library(pheatmap)
+library(ComplexHeatmap)
+library(ggpubr)
+library(ggcorrplot)
+theme_set(theme_cowplot())
+library(ggsci)
+library(viridis)
+
+# Seurat
+library(Seurat)
+
+# clustree
+library(clustree)
+```
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/plot.R"))
+```
+
+Load rds
+
+```{r load-rds, cache=FALSE}
+seurat = readRDS(here::here('output/02.cell_type/seurat_fibroblasts.rds'))
+seurat
+```
+
+## sub-clustering
+
+```{r sub-cluster, eval=FALSE}
+# not run, slow
+seurat = get_cluster(seurat)
+seurat = seurat$seurat_obj
+```
+
+## Dimensionlity reduction {.tabset}
+
+### UMAP {.tabset}
+
+```{r umap-res, results = "hide"}
+resolutions = seq(0, 2, 0.2)
+src_list <- lapply(resolutions, function(res) {
+    src <- c(
+        "#### Res {{res}} {.unnumbered}",
+        "```{r res-umap-{{res}}, fig.width=8, fig.height=8}",
+        "DimPlot(seurat, reduction = 'umap', group.by = 'RNA_snn_res.{{res}}', label = TRUE, pt.size = 0.5)",
+        "```",
+        ""
+    )
+    knitr::knit_expand(text = src)
+})
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+### tSNE {.tabset}
+
+```{r tsne-res, results = "hide"}
+resolutions = seq(0, 2, 0.2)
+src_list <- lapply(resolutions, function(res) {
+    src <- c(
+        "#### Res {{res}} {.unnumbered}",
+        "```{r res-tsne-{{res}}, fig.width=8, fig.height=8}",
+        "DimPlot(seurat, reduction = 'tsne', group.by = 'RNA_snn_res.{{res}}', label = TRUE, pt.size = 0.5)",
+        "```",
+        ""
+    )
+    knitr::knit_expand(text = src)
+})
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+## Expression of lineage markers {.tabset}
+
+```{r markers-dot, results = "hide"}
+resolutions = seq(0, 2, 0.2)
+src_list <- lapply(resolutions, function(res) {
+    src <- c(
+        "### Res {{res}} {.unnumbered}",
+        "```{r res-markers-dot-{{res}}, fig.width=12, fig.height=10}",
+        "DotPlot(seurat, features = rev(unlist(markers.to.plot)), dot.scale = 4, group.by = 'RNA_snn_res.{{res}}') + RotatedAxis() + theme(axis.text.x = element_text(size = rel(0.7)), axis.text.y = element_text(size = rel(0.9)), panel.grid = element_line(color = 'grey'), legend.position = 'bottom', legend.box = 'vertical')",
+        "```",
+        ""
+    )
+    knitr::knit_expand(text = src)
+})
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+## iCAF, myCAF and apCAF
+
+Ref:
+* Elyada, E., Bolisetty, M., Laise, P., Flynn, W.F., Courtois, E.T., Burkhart, R.A., Teinor, J.A., Belleau, P., Biffi, G., Lucito, M.S., et al. (2019). Cross-Species Single-Cell Analysis of Pancreatic Ductal Adenocarcinoma Reveals Antigen-Presenting Cancer-Associated Fibroblasts. Cancer Discov 9, 1102–1123.
+
+- myCAFs were primarily adjacent to cancer cells.
+- iCAFs were located in the desmoplastic areas of the tumor, farther away from the cancer cells.
+- apCAF expresses MHC class II (MHCII)–related genes and induces T-cell receptor (TCR) ligation in CD4+ T cells in an antigen-dependent manner
+
+```{r type-of-fibroblasts, fig.height=6, fig.width=6}
+markers = list(
+  iCAF = filter_features(seurat, c('IL6', 'PDGFRA', 'CXCL12', 'CFD', 'DPT', 'AGTR1', 'HAS1', 'CXCL1', 'CXCL2', 'CCL2', 'CXCL8', 'LMNA', 'PLA2G2A', 'CLU', 'EMP1')),
+  myCAF = filter_features(seurat, c('ACTA2', 'TAGLN', 'MMP11', 'HOPX', 'POSTN', 'TPM1', 'MYL9', 'TPM2')),
+  apCAF = filter_features(seurat, c('CD74', 'HLA-DRA', 'HLA-DPA1', 'HLA-DQA1', 'SYTL1')),
+  costimulatory = filter_features(seurat, c('KLRK1', 'ICOS', 'TNFRSF18', 'CD27', 'TNFRSF9', 'CD226', 'TNFRSF4', 'CD40', 'CD80', 'CD86'))
+)
+
+markers_aveByCluster = AverageExpression(seurat, assays = "RNA", features = unlist(markers), slot = "data", verbose = FALSE)
+mat = pheatmap:::scale_rows(as.matrix(markers_aveByCluster$RNA))
+
+x = ceiling(max(abs(mat)))
+col_fun = circlize::colorRamp2(c(-x, 0, x), c("#3658d3", "#ffffff", "#900504"))
+
+Heatmap(mat, name = 'Exp',
+        col = col_fun,
+        cluster_columns = F, cluster_rows = F,
+        row_split = factor(rep(
+          c('iCAF', 'myCAF', 'apCAF', 'costimulatory'), 
+          sapply(markers, length)),
+          levels = c('myCAF', 'iCAF', 'apCAF', 'costimulatory'))
+        )
+```
+
+## Cluster compositions
+
+Cluster compositions and cell number
+
+```{r cluster-check, fig.height=12, fig.width=12, cache=FALSE}
+res <- 2
+Idents(seurat) <- paste0("RNA_snn_res.", res)
+seurat$seurat_clusters <- Idents(seurat)
+cluster_stack(seurat)
+```
+
+## Percent of VDJ
+
+```{r percent-vdj, fig.width=8, fig.height=10}
+percent_vdj(seurat)
+```
+
+## Specific cell number of each cluster {.tabset}
+
+### Tissue
+
+```{r cell-num-source-tissue}
+DT::datatable(
+  seurat@meta.data %>%
+    group_by(seurat_clusters, Tissue) %>%
+    summarise(n = n()),
+  filter = 'top'
+)
+```
+
+### Patient
+
+```{r cell-num-source-patient}
+DT::datatable(
+  seurat@meta.data %>%
+    group_by(seurat_clusters, Patient) %>%
+    summarise(n = n()),
+  filter = 'top'
+)
+```
+
+### Origin
+
+```{r cell-num-source-origin}
+DT::datatable(
+  seurat@meta.data %>%
+    group_by(seurat_clusters, Origin) %>%
+    summarise(n = n()),
+  filter = 'top'
+)
+```
+
+### Source
+
+```{r cell-num-source-source}
+DT::datatable(
+  seurat@meta.data %>%
+    group_by(seurat_clusters, Source) %>%
+    summarise(n = n()),
+  filter = 'top'
+)
+```
+
+## Clustering trees {.tabset}
+
+Clustering trees show the relationship between clusterings at adjacent resolutions. Each cluster is represented as a node in a graph and the edges show the overlap between clusters.
+
+### Standard
+
+Coloured by clustering resolution.
+
+```{r clustree, fig.height=12, fig.width=12}
+clustree(seurat, prefix = 'RNA_snn_res.')
+```
+
+### Stability
+
+Coloured by the SC3 stability metric.
+
+```{r clustree-stability, fig.height=12, fig.width=12}
+clustree(seurat, node_colour = "sc3_stability")
+```
+
+### Genes {.tabset}
+
+Coloured by the expression of known marker genes.
+
+```{r known-genes}
+known_genes <- c(
+    # fibroblasts
+    "COL1A1", "COL1A2", "COL3A1", "LUM", "DCN", "C1R",
+    # iCAF
+    "IL6", "PDGFRA", "CXCL12", "CFD", "DPT", "AGTR1", "HAS1", "CXCL1", "CXCL2", "CCL2", "CXCL8", "LMNA", "PLA2G2A", "CLU", "EMP1",
+    # myCAF
+    "ACTA2", "TAGLN", "MMP11", "HOPX", "POSTN", "TPM1", "MYL9", "TPM2",
+    # apCAF
+    "CD74", "HLA-DRA", "HLA-DPA1", "HLA-DQA1"
+)
+is_present <- known_genes %in% rownames(seurat)
+```
+
+> The following genes aren't present in this dataset and will be skipped:
+> `r known_genes[!is_present]`
+
+```{r clustree-genes, results = "hide"}
+src_list <- lapply(known_genes[is_present], function(gene) {
+    src <- c("#### {{gene}} {.unnumbered}",
+             "```{r clustree-{{gene}}, fig.height=12, fig.width=12}",
+             "clustree(seurat, node_colour = '{{gene}}',",
+                      "node_colour_aggr = 'mean', exprs = 'data') +",
+             "scale_colour_viridis_c(option = 'plasma', begin = 0.3)",
+             "```",
+             "")
+    knitr::knit_expand(text = src)
+})
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+

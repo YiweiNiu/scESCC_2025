@@ -1,0 +1,707 @@
+---
+title: "00.Fig.epithelia.supp"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "Fig.epithelia.supp"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = FALSE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+
+# patch
+library(patchwork)
+library(cowplot)
+my_theme <- theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6, # title
+  font_family = "Arial"
+)
+geom.text.size <- 6 / (14 / 5)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+library(circlize)
+
+# color
+library(ggsci)
+
+# Seurat
+library(Seurat)
+
+# monocle
+library(monocle)
+```
+
+Load code
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+## Load data
+
+Load srat
+
+```{r load-rds, cache=FALSE}
+srat <- readRDS(here::here("output/04.rm_cells/seurat_epithelia.rds"))
+Idents(srat) <- "seurat_clusters"
+srat
+```
+
+Load metadata
+
+```{r load-meta, cache=FALSE, message=FALSE, warning=FALSE}
+metadata <- read_csv(here::here("output/04.rm_cells/seurat_epithelia.cellmeta.csv")) %>%
+    mutate(cellType3 = level_1)
+sam_info <- read_csv(here::here("data/sample_info.3.csv"))
+```
+
+Load malignant percent of each cluster
+
+```{r load-malignant, cache=FALSE, message=FALSE, warning=FALSE}
+cluster_malig <- readRDS(here::here('output', "epithelia.cor_bulk", 'epi.cor_with_bulk.rds')) %>%
+  group_by(seurat_clusters, malignant) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  ungroup() %>%
+  complete(seurat_clusters, malignant, fill = list(n = 0, Percent=0)) %>%
+  filter(malignant == "Yes") %>%
+  arrange(Percent)
+```
+
+## UMAP {.tabset}
+
+### Clusters
+
+```{r fig.width=3, fig.height=3, cache=FALSE}
+p.umap.cellType <- DimPlot(srat,
+  reduction = "umap", group.by = "seurat_clusters",
+  label = TRUE, label.size = geom.text.size,
+  raster = TRUE
+) +
+  scale_color_manual(values = cluster_color_maps) +
+  labs(title = NULL) +
+  my_theme +
+  NoLegend()
+p.umap.cellType
+
+# saveRDS(p.umap.cellType, file = here::here("output", DOCNAME, "Fig.umap.cellType.rds"))
+ggsave2(p.umap.cellType,
+  filename = here::here("output", DOCNAME, "Fig.umap.cellType.pdf"),
+  height = 3, width = 3, device = cairo_pdf
+)
+```
+
+### Origin2_n
+
+```{r fig.width=2.2, fig.height=1.7, cache=FALSE}
+p.umap.origin2 <- DimPlot(srat,
+  reduction = "umap", group.by = "Origin2_n",
+  raster = TRUE
+) +
+  scale_color_manual(values = origin2_color_maps) +
+  labs(title = NULL) +
+  my_theme
+p.umap.origin2
+
+#saveRDS(p.umap.origin4, file = here::here("output", DOCNAME, "Fig.umap.Origin4.rds"))
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.umap.Origin2.pdf"),
+  height = 1.7, width = 2.2, device=cairo_pdf
+)
+```
+
+### Patient
+
+```{r fig.width=2.1, fig.height=1.7, cache=FALSE}
+p.umap.patient <- DimPlot(srat,
+  reduction = "umap", group.by = "Patient", raster = TRUE
+) +
+  scale_color_manual(values = patient_color_maps) +
+  labs(title = NULL) +
+  my_theme
+p.umap.patient
+
+#saveRDS(p.umap.patient, file = here::here("output", DOCNAME, "Fig.umap.Patient.rds"))
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.umap.Patient.pdf"),
+  height = 1.7, width = 2.1, device=cairo_pdf
+)
+```
+
+### malignant
+
+```{r fig.width=2.5, fig.height=2, cache=FALSE}
+p.umap.malignant <- DimPlot(srat,
+  reduction = "umap", group.by = "malignant", raster = TRUE
+) +
+  scale_color_manual(values = epi_malig_colors) +
+  labs(title = NULL) +
+  my_theme
+p.umap.malignant
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.umap.malignant.pdf"),
+  height = 2, width = 2.5, device=cairo_pdf
+)
+```
+
+
+## Composition {.tabset}
+
+### By cluster by Origin4
+
+```{r fig.width=4, fig.height=2}
+p.byCluster.byOrigin4 <- srat@meta.data %>%
+  group_by(seurat_clusters, Origin4) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n / sum(n) * 100) %>%
+  mutate(seurat_clusters = factor(seurat_clusters, levels = cluster_malig$seurat_clusters)) %>%
+  ggplot(aes(x = seurat_clusters, y = Percent, fill = Origin4)) +
+  geom_bar(stat = "identity") +
+  labs(x = NULL, fill = NULL, y = "% of cells") +
+  scale_fill_manual(values = origin4_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  my_theme +
+  theme(
+    axis.text.x = element_text(angle = 60, hjust = 1),
+    legend.margin = margin(rep(0, 4), unit = "cm"),
+    legend.spacing.y = unit(0, "cm"),
+    legend.box.margin = margin(rep(-.2, 4), unit = "cm")
+  )
+p.byCluster.byOrigin4
+```
+
+### By cluster by Patient
+
+```{r fig.width=4, fig.height=2}
+p.byCluster.byPatient <- srat@meta.data %>%
+  group_by(seurat_clusters, Patient) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n / sum(n) * 100) %>%
+  mutate(seurat_clusters = factor(seurat_clusters, levels = cluster_malig$seurat_clusters)) %>%
+  ggplot(aes(x = seurat_clusters, y = Percent, fill = Patient)) +
+  geom_bar(stat = "identity") +
+  labs(x = NULL, fill = NULL, y = "% of cells") +
+  scale_fill_manual(values = patient_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  my_theme +
+  theme(
+    axis.text.x = element_text(angle = 60, hjust = 1),
+    legend.margin = margin(rep(0, 4), unit = "cm"),
+    legend.spacing.y = unit(0, "cm"),
+    legend.box.margin = margin(rep(-.2, 4), unit = "cm")
+  )
+p.byCluster.byPatient
+```
+
+### N3-N5
+
+肿瘤组织内异质性
+
+```{r fig.width=2.5, fig.height=3}
+p.clusterByN3N4N5 = srat@meta.data %>%
+  filter(Tissue == 'Tumor') %>%
+  droplevels() %>%
+  group_by(Patient, Origin, seurat_clusters) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  ggplot(aes(x = Origin, y = Percent, fill = seurat_clusters)) +
+  geom_col() +
+  labs(x = NULL, fill = NULL) +
+  scale_fill_manual(values = cluster_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  facet_wrap(.~Patient) +
+  my_theme +
+  theme(
+    axis.text.x = element_text(angle = 60, hjust = 1),
+    plot.margin = margin(rep(0, 4), unit = "cm"),
+    strip.background = element_rect(fill = "#f3f2f1")
+  )
+p.clusterByN3N4N5
+```
+
+
+## Richness
+
+Origin4
+
+```{r richness, fig.width=1, fig.height=2}
+df = srat@meta.data %>%
+  janitor::tabyl(seurat_clusters, Source) %>%
+  as.data.frame() %>%
+  column_to_rownames("seurat_clusters")
+
+richness <- apply(df, 2, FUN = function(x) {
+  tot <- sum(x)
+  length(x[x > 0.1 * tot])
+})
+richness <- data.frame(
+  Source = names(richness),
+  richness = richness
+) %>%
+  left_join(sam_info, by = "Source") %>%
+  mutate(
+    Tissue = factor(Tissue, levels = c("PBMC", "LN", "Normal", "Adjacent", "Tumor")),
+    Origin2_n = factor(Origin2_n, levels = c(
+      "prePBMC", "postPBMC", "nLN", "pLN",
+      "Normal", "Adjacent", "Tumor"
+    )),
+    Origin4 = factor(Origin4, levels = c(
+      "prePBMC", "postPBMC", "nLN", "m_nLN", "m_pLN",
+      "Normal", "Adjacent", "Tumor"
+    ))
+  )
+
+p.richness <- richness %>%
+  filter(richness != 0, Tissue != "PBMC", Origin4 != "nLN", Origin4 != "m_nLN") %>%
+  ggplot(aes(x = Origin4, y = richness, fill = Origin4)) +
+  geom_boxplot(width = .4, outlier.colour = NA) +
+  geom_jitter(position = position_jitter(0.1), size = .5) +
+  scale_fill_manual(values = origin4_color_maps) +
+  labs(x = NULL, y = "Richness") +
+  my_theme +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 60, hjust = 1)
+  )
+p.richness
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.richness.Origin4.pdf"),
+  height = 2, width = 1, device = cairo_pdf
+)
+```
+
+## Individuality
+
+Intra-sample: average Euclidean distance between all epithelial cells from given sample and the sample average.
+
+Inter-sample: average Euclidean distance between all epithelial cells from given sample and global average.
+
+由于细胞数量较少时，计算非常不准确，所以仅仅取细胞数大于 10 的样本计算。
+
+Ref:
+
+- Zhang, X., Peng, L., Luo, Y., Guo, W., Yao, J., Shao, M., Fan, W., Chen, Y., Cui, Q., Xi, Y., Sun, Y., Niu, X., Zhao, X., Chen, L., Wang, Y., Liu, Y., Yang, X., Wang, C., Zhong, C., … Lin, D. (2020). Dissecting Esophageal Squamous-Cell Carcinoma Ecosystem by Single-Cell Transcriptomic Analysis (SSRN Scholarly Paper ID 3541365). Social Science Research Network. https://doi.org/10.2139/ssrn.3541365 00000
+
+Get global average and sample average.
+
+```{r }
+# get meta
+vars <- c("UMAP_1", "UMAP_2", "seurat_clusters", "nFeature_RNA", "nCount_RNA", "cellType", "Patient", "Tissue", "Origin2_n", "Origin3", "Origin4", "Metastasis_n", "Drainage", "Source", "Origin")
+df_meta <- FetchData(srat,
+  vars = vars
+) %>%
+  rownames_to_column("barcode")
+
+# Adding cluster label to center of cluster on UMAP
+umap_label <- FetchData(srat,
+  vars = c("seurat_clusters", "UMAP_1", "UMAP_2")
+) %>%
+  group_by(seurat_clusters) %>%
+  summarise(x = mean(UMAP_1), y = mean(UMAP_2))
+
+# pc_mat
+pc_mat <- Embeddings(object = srat, reduction = "pca")
+
+# global average
+global_pc <- colMeans(pc_mat)
+
+# sample average
+sample_barcode <- lapply(unique(metadata$Source), function(x) {
+  metadata %>%
+    filter(Source == x) %>%
+    pull(barcode)
+})
+names(sample_barcode) <- unique(metadata$Source)
+sample_pc <- lapply(sample_barcode, function(x) {
+  if (length(x) == 1) {
+    pc_mat[x, ]
+  } else {
+    sample_pc_mat <- pc_mat[x, ]
+    colMeans(sample_pc_mat)
+  }
+})
+sample_pc <- do.call(rbind, sample_pc)
+```
+
+Get the intra-sample and inter-sample distance of each sample.
+
+```{r get-dist}
+euclidean <- function(a, b) sqrt(sum((a - b)^2))
+
+# intra-sample distance
+intra_sam_dist <- lapply(rownames(sample_pc), function(i) {
+  # get all the cells from the sample
+  cells <- metadata %>%
+    filter(Source == i) %>%
+    pull(barcode)
+  # get pc_mat
+  mat <- pc_mat[cells, ]
+  # compute the dist
+  if (length(cells) == 1) {
+    return(0)
+  } else {
+    d <- apply(mat, 1, FUN = function(j) {
+      return(euclidean(j, sample_pc[i, ]))
+    })
+    return(mean(d))
+  }
+})
+names(intra_sam_dist) <- rownames(sample_pc)
+intra_sam_dist <- do.call(c, intra_sam_dist)
+
+# inter-sample distance
+inter_sam_dist <- lapply(rownames(sample_pc), function(i) {
+  # get all the cells from the sample
+  cells <- df_meta %>%
+    filter(Source == i) %>%
+    pull(barcode)
+  # get pc_mat
+  mat <- pc_mat[cells, ]
+  # compute the dist
+  if (length(cells) == 1) {
+    return(euclidean(mat, global_pc))
+  } else {
+    d <- apply(mat, 1, FUN = function(j) {
+      return(euclidean(j, global_pc))
+    })
+    return(mean(d))
+  }
+})
+names(inter_sam_dist) <- rownames(sample_pc)
+inter_sam_dist <- do.call(c, inter_sam_dist)
+
+# cell num
+cell_num <- metadata %>%
+  group_by(Source) %>%
+  summarise(n = n())
+
+# get df
+df <- data.frame(
+  Source = rownames(sample_pc),
+  intra_sam = intra_sam_dist,
+  inter_sam = inter_sam_dist
+) %>%
+  mutate(rela_sam = inter_sam / intra_sam) %>%
+  left_join(cell_num, by = "Source") %>%
+  left_join(sam_info, by = "Source") %>%
+  mutate(
+    Tissue = factor(Tissue, levels = c("PBMC", "LN", "Normal", "Adjacent", "Tumor")),
+    Origin2_n = factor(Origin2_n, levels = c(
+      "prePBMC", "postPBMC", "nLN", "pLN",
+      "Normal", "Adjacent", "Tumor"
+    )),
+    Origin4 = factor(Origin4, levels = c(
+      "prePBMC", "postPBMC", "nLN", "m_nLN", "m_pLN",
+      "Normal", "Adjacent", "Tumor"
+    ))
+  )
+
+# sample with cell > 10
+df %>%
+  filter(n >= 10) %>%
+  dim()
+```
+
+Plot correlation
+
+```{r plot-intra-inter-cor, fig.height=2, fig.width=2.3}
+p.individuality.cor = df %>%
+  filter(n >= 10) %>%
+  ggplot(aes(x = intra_sam, y = inter_sam, color = Origin4, shape = Patient)) +
+  geom_point(size = 2) +
+  scale_color_manual(values = origin4_color_maps) +
+  # geom_text(aes(label = Source)) +
+  labs(
+    x = "Intra-sample heterogeneity",
+    y = "Inter-sample heterogeneity",
+    color = "Tissue"
+  ) +
+  my_theme
+p.individuality.cor
+```
+
+Plot by Origin4
+
+```{r relative-heterogeneity-Origin4, fig.width=1, fig.height=2}
+p.individuality.Origin4 = df %>%
+  filter(n >= 10) %>%
+  mutate(rela_sam = inter_sam / intra_sam) %>%
+  ggplot(aes(x = Origin4, y = rela_sam, fill = Origin4)) +
+  geom_boxplot(width = .4, outlier.colour = NA) +
+  geom_jitter(position = position_jitter(0.1), size = .5) +
+  scale_fill_manual(values = origin4_color_maps) +
+  labs(x = NULL, y = "Relative heterogeneity\n(inter-sample/intra-sample)") +
+  my_theme +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 60, hjust = 1)
+  )
+p.individuality.Origin4
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.individuality.Origin4.pdf"),
+  height = 2, width = 1, device = cairo_pdf
+)
+```
+
+
+## HC (HVGs) {.tabset}
+
+anno
+
+```{r , fig.width=6, fig.height=4}
+anno_col = srat@meta.data %>%
+  dplyr::select(seurat_clusters, malignant) %>%
+  distinct() %>%
+  remove_rownames() %>%
+  column_to_rownames("seurat_clusters")
+
+anno_color = list(
+  malignant = epi_malig_colors
+)
+```
+
+Using average expression of highly variable genes.
+
+### average
+
+```{r , fig.width=6, fig.height=4}
+# Get average expression of variable features across cluster
+Idents(srat) <- 'seurat_clusters'
+var_ave_byCluster = AverageExpression(srat, assays = "RNA", features = VariableFeatures(srat), slot = "data", verbose = F)$RNA
+
+pheatmap::pheatmap(var_ave_byCluster, scale = "row", show_rownames = F, 
+         color = colorRampPalette(c("blue", "white", "red"))(50),
+         treeheight_row = 0,
+         clustering_method = "average",
+         annotation_col = anno_col,
+         annotation_colors = anno_color,
+         border_color = NA)
+```
+
+### complete
+
+```{r , fig.width=6, fig.height=4}
+pheatmap(var_ave_byCluster, scale = "row", show_rownames = F, 
+         color = colorRampPalette(c("#476fa9", "#ffffff", "#ca3226"))(50),
+         treeheight_row = 0,
+         clustering_method = "complete",
+         annotation_col = anno_col,
+         annotation_colors = anno_color,
+         border_color = NA)
+```
+
+### ward.D2
+
+```{r , fig.width=6, fig.height=4}
+pheatmap(var_ave_byCluster, scale = "row", show_rownames = F, 
+         color = colorRampPalette(c("#476fa9", "#ffffff", "#ca3226"))(50),
+         treeheight_row = 0,
+         clustering_method = "ward.D2",
+         annotation_col = anno_col,
+         annotation_colors = anno_color,
+         border_color = NA)
+```
+
+## scHCL
+
+Read the result of epithelia lineage of scHCL
+
+```{r read-epi-lineage, fig.width=7, fig.height=2.5}
+df_schcl = readRDS(here::here('output', "scHCL.epithelia", 'epithelia.lineage.rds'))
+
+d_4_p = df_schcl %>%
+  left_join(metadata, by = 'barcode')
+
+p = d_4_p %>%
+  group_by(seurat_clusters, schcl_type) %>%
+  summarise(n = n()) %>%
+  mutate(Prop = n/sum(n) * 100) %>%
+  mutate(seurat_clusters = factor(seurat_clusters, levels = cluster_malig$seurat_clusters)) %>%
+  ggplot(aes(x = seurat_clusters, y = schcl_type, size = Prop, color = schcl_type)) +
+  geom_point() +
+  scale_size(range = c(1, 4)) +
+  scale_color_manual(values = vega_20_scanpy) +
+  guides(color = FALSE) +
+  labs(y = NULL, x = NULL) +
+  my_theme
+p
+```
+
+## monocle2
+
+Load cds
+
+```{r load-monocle2-cds, cache=FALSE}
+cds_lst = list(
+  S0619 = readRDS(here::here(file.path('output/04.rm_cells', paste0('monocle2_epithelia.', "S0619", '.rds')))),
+  S0730 = readRDS(here::here(file.path('output/04.rm_cells', paste0('monocle2_epithelia.', "S0730", '.rds')))),
+  S0819 = readRDS(here::here(file.path('output/04.rm_cells', paste0('monocle2_epithelia.', "S0819", '.rds')))),
+  S0920 = readRDS(here::here(file.path('output/04.rm_cells', paste0('monocle2_epithelia.', "S0920", '.rds')))),
+  S1125 = readRDS(here::here(file.path('output/04.rm_cells', paste0('monocle2_epithelia.', "S1125", '.rds')))),
+  S1204 = readRDS(here::here(file.path('output/04.rm_cells', paste0('monocle2_epithelia.', "S1204", '.rds'))))
+)
+```
+
+```{r , fig.width=3.6, fig.height=1.5}
+p.monocle2_malignant = lapply(cds_lst, function(x){
+  plot_cell_trajectory(x, color_by = "malignant", cell_size = .1, show_branch_points = FALSE,) +
+    scale_color_manual(values = epi_malig_colors) +
+    guides(colour = guide_legend(override.aes = list(size=2))) +
+    my_theme +
+    NoAxes()
+}) %>%
+  wrap_plots(ncol = 3, guides = "collect") %>%
+  as.ggplot()
+p.monocle2_malignant
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.monocle2_malignant.pdf"),
+  height = 1.5, width = 3.6, device = cairo_pdf
+)
+```
+
+Up
+
+```{r fig.width=1.8, fig.height=2.5}
+random1 = readRDS(here::here('output/04.rm_cells/monocle2_epithelia.random1.rds'))
+
+my_genes <- row.names(subset(fData(random1), gene_short_name %in% c("FABP5", "KRT14", "DDX5")))
+cds_subset <- random1[my_genes,]
+p.monocle2_upG = plot_genes_in_pseudotime(cds_subset, color_by = "malignant",
+                         min_expr = 1,
+                         cell_size = .1) +
+  scale_color_manual(values = epi_malig_colors) +
+  my_theme +
+  theme(legend.position = "none")
+p.monocle2_upG
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.monocle2_up_gene.pdf"),
+  height = 2.5, width = 1.8, device = cairo_pdf
+)
+```
+
+Dn
+
+```{r fig.width=1.8, fig.height=2.5}
+my_genes <- row.names(subset(fData(random1), gene_short_name %in% c("HOPX", "MUC21", "SPINK7")))
+cds_subset <- random1[my_genes,]
+p.monocle2_dnG = plot_genes_in_pseudotime(cds_subset, color_by = "malignant",
+                         min_expr = 1,
+                         cell_size = .1) +
+  scale_color_manual(values = epi_malig_colors) +
+  my_theme +
+  theme(legend.position = "none")
+p.monocle2_dnG
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.monocle2_dn_gene.pdf"),
+  height = 2.5, width = 1.8, device = cairo_pdf
+)
+```
+
+## Selected genes
+
+### S100A*
+
+```{r fig.width=12, fig.height=12}
+FeaturePlot(srat, features = c("S100A10", "S100A11", "S100A9", "S100A12"), label = TRUE)
+```
+
+```{r fig.width=8, fig.height=5}
+StackedVlnPlot(srat, features = c("S100A10", "S100A11", "S100A9", "S100A12"),
+                         pt.size = 0, sort = TRUE, ncol = 1)
+```
+
+### SPRR*
+
+```{r , fig.width=12, fig.height=5}
+selected_genes = c("SPRR1A", "SPRR1B", "SPRR2A", "SPRR3")
+StackedVlnPlot(srat, features = selected_genes, color.use = cluster_color_maps)
+```
+
+### SOX2/TP63
+
+```{r fig.width=7, fig.height=2}
+srat@active.ident = factor(srat@active.ident, levels = cluster_malig$seurat_clusters)
+DotPlot(srat, features = c("SOX2", "TP63", "KRT14", "KRT5", "KRT4", "KRT13", "IVL"),
+        dot.scale = 4) +
+  coord_flip() + 
+  labs(x = NULL, y = NULL) +
+  my_theme
+srat@active.ident = factor(srat@active.ident, levels = as.character(0:33))
+
+ggsave2(
+  filename = "test.pdf",
+  height = 2, width = 7
+)
+```
+
+```{r eval=FALSE}
+srat@active.ident = factor(srat@active.ident, levels = cluster_malig$seurat_clusters)
+CellChat::dotPlot(srat, features = c("SOX2", "TP63", "KRT15", "KRT5", "KRT4", "KRT13", "IVL"),
+                  dot.scale = 4)+
+  my_theme
+srat@active.ident = factor(srat@active.ident, levels = as.character(0:33))
+```
+
+```{r fig.width=12, fig.height=12}
+FeaturePlot(srat, features = c("SOX2", "TP63", "KRT15", "KRT5", "KRT4", "KRT13", "IVL"), label = TRUE)
+```
+
+## Session info
+

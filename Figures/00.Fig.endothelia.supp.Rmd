@@ -1,0 +1,513 @@
+---
+title: "00.Fig.endothelia.supp"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "Fig.endothelia.supp"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = FALSE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+
+# patch
+library(patchwork)
+library(cowplot)
+my_theme <- theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6, # title
+  font_family = "Arial"
+)
+geom.text.size <- 6 / (14 / 5)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+library(circlize)
+
+# color
+library(ggsci)
+
+# srat
+library(Seurat)
+
+# monocle
+library(monocle3)
+```
+
+Load code
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+## Load data
+
+Load srat
+
+```{r load-rds, cache=FALSE}
+srat <- readRDS(here::here("output/04.rm_cells/seurat_endothelia.rds"))
+Idents(srat) <- "level_2"
+srat
+```
+
+Load metadata
+
+```{r load-meta, cache=FALSE, message=FALSE, warning=FALSE}
+metadata <- read_csv(here::here("output/04.rm_cells/seurat_endothelia.cellmeta.csv")) %>%
+    mutate(cellType3 = level_2)
+sam_info <- read_csv(here::here("data/sample_info.3.csv"))
+```
+
+Load c2c
+
+```{r load-c2c, cache=FALSE}
+df_c2c = readRDS(here::here("data", "c2c.endo.rds"))
+head(df_c2c)
+```
+
+## Classification {.tabset}
+
+### FeaturePlot
+
+```{r FeaturePlot-markers, fig.width=5, fig.height=2.3, cache=FALSE}
+p.markers = customFeaturePlot(srat, pt.size = 0.1, features = c(
+  # blood
+  "FLT1",
+  # lymphatic
+  "PDPN",
+  # vein
+  "ACKR1",
+  # artery
+  "GJA5", "VEGFC",
+  # tip cells
+  "ESM1", "PGF", "PDGFB",
+  # pcv
+  "SELE", "SELP"
+  # 
+)) %>%
+  wrap_plots(nrow = 2, ncol = 5) & theme(plot.margin = margin(0))
+p.markers
+```
+
+### SingleR
+
+```{r SinlgeR-Goveia, cache=FALSE, fig.height=3, fig.width=4}
+cmp_data_dir = '../../sc_data_to_cmp/Goveia_2020'
+
+matched = readRDS(file.path(cmp_data_dir, 'matched.res_0.8.rds'))
+rownames(matched) = df_c2c$level_2
+p.singler = summary_ggplot(matched, xlab = "This study", ylab = 'Goveia_2020',
+                           geom.text.size = geom.text.size) +
+  my_theme +
+  theme(axis.text.x=element_text(angle=60, hjust=1))
+p.singler
+```
+
+### Top 50 DEGs
+
+Get top 50 markers
+
+```{r get-top-markers, message=FALSE, warning=FALSE, fig.width=3, fig.height=4}
+# get markers
+markers = read_tsv(here::here('output/04.rm_cells/seurat_endothelia.markers.txt'))
+# top 50
+top50 = markers %>%
+  group_by(cluster) %>%
+  top_n(50, wt = avg_logFC)
+
+# rename
+top50 = top50 %>%
+  left_join(df_c2c, by = "cluster")
+# de-duplicate
+top50 = top50[!duplicated(top50$gene),]
+
+# to list
+top50_lst = lapply(levels(top50$level_2), function(x) {
+  top50 %>%
+    filter(level_2 == x) %>%
+    pull(gene)
+})
+names(top50_lst) = levels(top50$level_2)
+
+# get exp
+mat = AverageExpression(srat, assays = "RNA", features = unlist(top50_lst),
+                        slot = "data", verbose = F)$RNA
+mat = log1p(as.matrix(mat))
+
+# scale
+mat_scale = pheatmap:::scale_rows(mat)
+
+# color
+x = ceiling(max(abs(mat_scale)))
+col_fun = circlize::colorRamp2(c(-x, 0, x), c("blue", "white", "red"))
+
+# marker
+marker_2_lab = c("PLVAP", "SPARC", # 
+                 "APLNR", "SOX4",
+                 "ESM1", "PGF",
+                 "ACKR1", "SELP", "SELE",
+                 "CA2", "RGCC",
+                 "PROX1", "PDPN",
+                 "APOD", "TIMP1",
+                 "CXCL8", "IL6",
+                 "FBLN5", "GJA5",
+                 "CD74", "CLU"
+                 )
+# location
+marker_2_lab = sapply(marker_2_lab, function(x){which(rownames(mat) == x)}, simplify = T)
+ha = rowAnnotation(foo = anno_mark(at = marker_2_lab,
+                                   labels = names(marker_2_lab),
+                                   labels_gp = gpar(fontsize = 6)))
+
+ht = Heatmap(mat_scale, name = "Exp.",
+        col = col_fun,
+        right_annotation = ha,
+        cluster_columns = F,
+        cluster_rows = F,
+        show_row_names = FALSE,
+        column_names_gp = gpar(fontsize = 6),
+        #column_names_rot = 60,
+        heatmap_legend_param = list(#direction = "horizontal",
+                                    labels_gp = gpar(fontsize = 6),
+                                    title_gp = gpar(fontsize = 6),
+                                    #title_position = "leftcenter",
+                                    grid_height = unit(2, "mm"),
+                                    grid_width = unit(2, "mm"))
+        )
+#draw(ht, heatmap_legend_side = "bottom")
+p.markers.top50 = plot_grid(grid.grabExpr(draw(ht, heatmap_legend_side = "right")))
+p.markers.top50
+```
+
+## Composition
+
+### Frac. changes by Origin4
+
+```{r overall-fraction-change-Origin4, fig.width=2, fig.height=2, cache=FALSE}
+tb.fc <- readRDS(here::here("output", "freq.frac_change.endo", "tb.fc.rds"))
+
+p.fractionChange <- PlotFracChange(tb.fc, x = "Origin4") +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+p.fractionChange
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.frac_change.byOrigin4.pdf"),
+  height = 2.5, width = 2, device = cairo_pdf
+)
+```
+
+### Origin4 enrichment
+
+```{r fig.width=2, fig.height=2, warning=FALSE}
+cluster_cellNum <- metadata %>%
+  group_by(cellType3) %>%
+  summarise(cluster.cell_num = n()) %>%
+  mutate(cluster.cell_num = as.numeric(cluster.cell_num))
+
+origin2_CellNum <- sam_info %>%
+  group_by(Origin4) %>%
+  summarise(origin.cell_num = sum(cell.filtered)) %>%
+  mutate(origin.cell_num = as.numeric(origin.cell_num)) %>%
+  mutate(total = sum(origin.cell_num)) %>%
+  mutate(total = as.numeric(total))
+
+cluster_byOrigin2 <- metadata %>%
+  group_by(cellType3, Origin4) %>%
+  summarise(o = n()) %>%
+  mutate(o = as.numeric(o))
+
+# add origins not existing
+tmp <- setdiff(unique(metadata$Origin4), cluster_byOrigin2$Origin4)
+if (length(tmp) > 0) {
+  for (t in tmp) {
+    x <- tibble(cellType3 = unique(cluster_cellNum$cellType3), Origin4 = t, o = 0)
+    cluster_byOrigin2 <- bind_rows(cluster_byOrigin2, x)
+  }
+}
+
+r_oe <- cluster_byOrigin2 %>%
+  left_join(origin2_CellNum, by = "Origin4") %>%
+  left_join(cluster_cellNum, by = "cellType3") %>%
+  mutate(e = (origin.cell_num * cluster.cell_num) / total) %>%
+  mutate(r = o / e) %>%
+  dplyr::select(cellType3, Origin4, r) %>%
+  spread(Origin4, r, fill = 0) %>%
+  column_to_rownames("cellType3")
+
+# order
+tmp.df <- r_oe %>%
+  rownames_to_column("cellType3") %>%
+  arrange(nLN, m_nLN, m_pLN, Normal, Adjacent, Tumor)
+
+# data for plot
+r_oe[r_oe > 10] <- 10
+d4p <- r_oe %>%
+  rownames_to_column("cellType3") %>%
+  pivot_longer(cols = !cellType3, names_to = "Origin4") %>%
+  mutate(
+    Origin4 = factor(Origin4, levels = c(
+      "prePBMC", "postPBMC",
+      "nLN", "m_nLN", "m_pLN",
+      "Normal", "Adjacent",
+      "Tumor"
+    )),
+    cellType3 = factor(cellType3, levels = tmp.df$cellType3)
+  )
+
+# % lineage prop
+df.lineage_prop <- metadata %>%
+  group_by(cellType3, Origin4) %>%
+  summarise(cellType3.cell_num = n()) %>%
+  mutate(cellType3.cell_num = as.numeric(cellType3.cell_num)) %>%
+  ungroup() %>%
+  mutate(tot = nrow(metadata)) %>%
+  mutate(lineage.prop = cellType3.cell_num * 100 / tot)
+
+# plot
+p.roe <- d4p %>%
+  filter(!str_detect(Origin4, "PBMC")) %>%
+  ggplot(aes(x = Origin4, y = cellType3, fill = value)) +
+  geom_tile() +
+  geom_point(
+    data = df.lineage_prop,
+    aes(x = Origin4, y = cellType3, size = lineage.prop),
+    shape = 1,
+    inherit.aes = FALSE
+  ) +
+  scale_x_discrete(position = "top") +
+  scale_y_discrete(position = "right") +
+  scale_fill_gradient2(
+    midpoint = 1,
+    low = "blue", mid = "white", high = "red",
+    name = expression(R[O / E])
+  ) +
+  scale_size(range = c(1, 3)) +
+  labs(size = "% lineage") +
+  theme_cowplot(font_size = 6) +
+  theme(
+    axis.text.x = element_text(angle = 60, hjust = 0),
+    axis.title = element_blank(),
+    axis.line = element_blank(),
+    axis.ticks = element_blank(),
+    legend.position = "right",
+    text = element_text(size = 6)
+  )
+p.roe
+
+# save
+saveRDS(p.roe, file = here::here("output", DOCNAME, "Fig.Roe.byOrigin4.rds"))
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.Roe.byOrigin4.pdf"),
+  height = 2, width = 2, device = cairo_pdf
+)
+```
+
+## AUCell/SCENIC
+
+Hallmark
+
+```{r fig.width=3, fig.height=3}
+cell_type <- "endothelia"
+anno_level <- "level_2"
+
+# load
+de_tf.glm_patient <- read_tsv(here::here("output", "DE_MSigDB_H", paste0(cell_type, ".de_MSigDB_H.glm_patient.tsv")))
+
+# cell types
+d4p <- de_tf.glm_patient %>%
+  left_join(df_c2c, by = "cluster") %>%
+  dplyr::rename(cellType3 = level_2)
+
+# t_mat
+t_mat <- d4p %>%
+  pivot_wider(id_cols = "gene", names_from = "cellType3", values_from = "t") %>%
+  column_to_rownames("gene")
+t_mat <- t_mat[, levels(d4p$cellType3)]
+
+# select rows to show
+selected_row <- d4p %>%
+  filter(p_adj < 0.05) %>% # keep only those with p_adj < 0.05
+  group_by(cluster) %>%
+  top_n(3, wt = t) %>%
+  pull(gene) %>%
+  unique()
+
+p.glm.H <- plot_heatmap_glm(as.matrix(t_mat[selected_row, ]),
+  cluster_columns = FALSE,
+  show_row_dend = FALSE,
+  show_column_dend = FALSE
+)
+p.glm.H
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.DE_Hallmark.pdf"),
+  height = 3, width = 3.3, device = cairo_pdf
+)
+```
+
+TFs
+
+```{r fig.width=2.5, fig.height=3.5}
+cell_type <- "endothelia"
+anno_level <- "level_2"
+
+# load
+de_tf.glm_patient <- read_csv(here::here("output", paste0("DE_TF.", cell_type), "de_tf.glm_patient.csv"))
+
+# cell types
+d4p <- de_tf.glm_patient %>%
+  left_join(df_c2c, by = "cluster") %>%
+  dplyr::rename(cellType3 = level_2)
+
+# t_mat
+t_mat <- d4p %>%
+  pivot_wider(id_cols = "gene", names_from = "cellType3", values_from = "t") %>%
+  column_to_rownames("gene")
+t_mat <- t_mat[, levels(d4p$cellType3)]
+
+# select rows to show
+selected_row <- d4p %>%
+  filter(p_adj < 0.05) %>% # keep only those with p_adj < 0.05
+  group_by(cluster) %>%
+  top_n(3, wt = t) %>%
+  pull(gene) %>%
+  unique()
+
+p.glm.TF <- plot_heatmap_glm(as.matrix(t_mat[selected_row, ]),
+  cluster_columns = FALSE,
+  show_row_dend = FALSE
+)
+p.glm.TF
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.DE_TFs.pdf"),
+  height = 4, width = 2.5, device = cairo_pdf
+)
+```
+
+## Selected genes
+
+### Angiogenesis
+
+- Paper: Hida, K., Maishi, N., Annan, D.A., and Hida, Y. (2018). Contribution of Tumor Endothelial Cells in Cancer Progression. Int J Mol Sci 19.
+
+```{r Angiogenesis, fig.width=2.5, fig.height=3}
+markers <- list(
+  Activator = c("FLT1", "KDR", "FLT4", "FGF2", "ANGPT1", "ANGPT2", "TEK", "HGF", "EGF", "PDGFA", "PDGFB", "PGF"),
+  Inhibitor = c("THBS1", "DLL4", "VASH1", "RCAN1", "COL18A1", "COL4A1", "COL4A2")
+)
+
+ht <- customDoHeatmap(srat, markers, z_score = T, idents = "level_2", cluster_columns = FALSE)
+p <- plot_grid(grid.grabExpr(draw(ht, heatmap_legend_side = "right")))
+p
+```
+
+### MHC-II
+
+- Paper: Goveia, J., Rohlenova, K., Taverna, F., Treps, L., Conradi, L.-C., Pircher, A., Geldhof, V., Rooij, L.P.M.H. de, Kalucka, J., Sokol, L., et al. (2020). An Integrated Gene Expression Landscape Profiling Approach to Identify Lung Tumor Endothelial Cell Heterogeneity and Angiogenic Candidates. Cancer Cell 37, 21-36.e13.
+
+```{r Goveia-MHC-II, fig.width=2.5, fig.height=2.5, cache=FALSE}
+markers <- c('HLA-DMA', 'HLA-DMB', 'HLA-DOA', 'HLA-DOB', 'HLA-DPA1', 'HLA-DPB1', 'HLA-DQA1', 'HLA-DQA2', 'HLA-DQB1', 'HLA-DQB2', 'HLA-DRA', 'HLA-DRB1', 'HLA-DRB5', 'CD40', 'CD80', 'CD86')
+
+ht <- customDoHeatmap(srat, markers, z_score = T, idents = "level_2", cluster_columns = FALSE)
+p <- plot_grid(grid.grabExpr(draw(ht, heatmap_legend_side = "right")))
+p
+```
+
+### Endothelia Cell Activation {.tabset}
+
+Ref: [Mechanisms of endothelia Activation](https://link.springer.com/referenceworkentry/10.1007%2F978-0-387-84828-0_183)
+
+### NF-κB
+
+NF-κB as a Central Regulator of endothelia Cell Activation
+
+```{r NF-κB, fig.width=5, fig.height=4}
+CellChat::StackedVlnPlot(srat, features = c("NFKB1", "RELA", "RELB", "REL", "NFKB2"))
+```
+
+IκB
+
+```{r IκB, fig.width=5, fig.height=3}
+CellChat::StackedVlnPlot(srat, features = c("CHUK", "IKBKB", "IKBKG"))
+```
+
+### Leukocyte Adhesion Molecules, and Chemokines
+
+- E-selectin is only expressed in activated endothelia cells
+
+- In activated endothelium, E-selectin expression is largely confined to postcapillary venules (Aird, 2012)
+
+- In “resting” endothelium, P-selectin is stored intracellularly in preexisting Weibel–Palade bodies and is expressed preferentially in postcapillary venules (Aird William C., 2007)
+
+- Binding of endothelial E-selectin and P-selectin to leukocyte carbohydrate-based ligands promotes rolling of leukocytes to the endothelium
+
+- Binding of endothelial cell adhesion molecules, including vascular cell adhesion molecule
+(VCAM)-1 and intercellular adhesion molecule (ICAM)-1 to leukocyte integrins mediates firm adhesion.
+
+- T cells for tumor immunotherapy was enhanced when proinflammatory agents that up-regulated ICAM and VCAM (Dudley, 2012)
+
+```{r selectin, fig.width=5, fig.height=4}
+CellChat::StackedVlnPlot(srat, features = c("SELE", "SELP", "ICAM1", "ICAM2", "VCAM1", "PECAM1"))
+```
+
+Chemokines (IL-6, IL-8, MCP-1)
+
+```{r Chemokines, fig.width=4, fig.height=3}
+CellChat::StackedVlnPlot(srat, features = c("IL6", "CXCL8", "CCL2"))
+```
+
+
+## Session info

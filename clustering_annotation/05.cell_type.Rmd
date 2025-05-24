@@ -1,0 +1,2280 @@
+---
+title: "05.cell_type"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME = "05.cell_type"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+dir.create(here::here("docs", "assets", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+    if (before) {
+        print(paste("Start:", Sys.time()))
+        NOW <<- Sys.time()
+    } else {
+        print(paste("Stop:", Sys.time()))
+        print(Sys.time() - NOW)
+    }
+})
+
+knitr::opts_chunk$set(
+    autodep        = TRUE,
+    cache          = TRUE,
+    cache.path     = paste0("cache/", DOCNAME, "/"),
+    cache.lazy     = FALSE, 
+    cache.comments = FALSE,
+    echo           = TRUE,
+    error          = FALSE,
+    fig.align      = "center",
+    fig.width      = 10,
+    fig.height     = 8,
+    message        = FALSE,
+    warning        = FALSE,
+    timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Seurat
+library(Seurat)
+
+# Plotting
+library(scales)
+library(ggrastr)
+library(ggcorrplot)
+library(pheatmap)
+library(ggpubr)
+library(ggplotify)
+library(ggrepel)
+
+# pvclust
+library(pvclust)
+library(dendextend)
+
+# fonts
+library(extrafont)
+#font_import()
+#font_import(paths = "/T02Data/niuyw/.local/share/fonts")
+loadfonts(device = "pdf", quiet = TRUE)
+
+# patch
+library(cowplot)
+theme_set(theme_cowplot(font_size = 12,
+                        rel_small = 10/12,
+                        rel_tiny = 8/12,
+                        rel_large = 12/12,
+                        font_family = "Arial"))
+library(patchwork)
+
+# color
+library(ggsci)
+```
+
+```{r source, cache=FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+Load rds directly (since the process is too slow)
+
+```{r load-rds, cache=FALSE}
+seurat = readRDS(here::here('output/04.rm_cells/seurat.rds'))
+Idents(seurat) <- 'cellType'
+seurat
+```
+
+## UMAP/tSNE/PCA {.tabset}
+
+### UMAP {.tabset}
+
+#### Cluster
+
+```{r umap, fig.width=7, fig.height=3, cache=FALSE}
+p.umap.cellType = DimPlot(seurat, reduction = 'umap', group.by = 'cellType',
+                          label = TRUE, label.size = 3) + 
+  scale_color_manual(values = cell_color_maps) +
+  theme_void() +
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=1), 
+        legend.position = "none",
+        plot.margin = margin(0))
+#p.umap.cellType
+ggsave2(p.umap.cellType, filename = here::here("output", DOCNAME, "p.umap.cellType.png"),
+       height = 2.5, width = 2.5, type = "cairo")
+
+p.umap.vdj = DimPlot(seurat, reduction = 'umap', group.by = 'VDJ') + 
+  scale_color_manual(values = vdj_color_maps) +
+  theme_void() +
+  theme(legend.key.size = unit(0.15, "inch"))
+ggsave2(p.umap.vdj, filename = here::here("output", DOCNAME, "p.umap.vdj.png"),
+       height = 2, width = 2.5, type = "cairo")
+
+p.umap.cellType + p.umap.vdj
+```
+
+#### Origin2_n
+
+```{r plot-umap-Origin2_n, cache=FALSE}
+p.umap.Origin2_n = DimPlot_rast(seurat, reduction = "umap", group.by = 'Origin2_n') +
+  scale_color_manual(values = origin2_color_maps) +
+  theme_void() +
+  theme(legend.key.size = unit(0.15, "inch"))
+ggsave2(p.umap.Origin2_n, filename = here::here("output", DOCNAME, "p.umap.Origin2_n.png"),
+       height = 2, width = 2.5, type = "cairo")
+p.umap.Origin2_n
+```
+
+```{r plot-umap-Origin2_n-2, fig.width=12, fig.height=10}
+DimPlot(seurat, reduction = "umap", split.by = 'Origin2_n', ncol = 3) +
+  scale_color_manual(values = cell_color_maps)
+```
+
+#### Patient
+
+```{r plot-umap-patient, cache=FALSE}
+p.umap.Patient = DimPlot_rast(seurat, reduction = "umap", group.by = 'Patient') + 
+  scale_color_manual(values = patient_color_maps) +
+  theme_void() +
+  theme(legend.key.size = unit(0.15, "inch"))
+
+p.umap.Patient
+```
+
+```{r plot-umap-patient-2, fig.width=12, fig.height=8}
+DimPlot(seurat, reduction = "umap", split.by = 'Patient', ncol = 3) +
+  scale_color_manual(values = cell_color_maps)
+```
+
+#### Tissue
+
+```{r plot-umap-tissue, cache=FALSE}
+p.umap.Tissue = DimPlot_rast(seurat, reduction = "umap", group.by = 'Tissue') + 
+  scale_color_manual(values = tissue_color_maps) +
+  labs(title = "Tissue")
+
+p.umap.Tissue
+```
+
+```{r plot-umap-tissue-2, fig.width=12, fig.height=8}
+DimPlot(seurat, reduction = "umap", split.by = 'Tissue', ncol = 3) +
+  scale_color_manual(values = cell_color_maps)
+```
+
+#### Metastasis_n
+
+```{r plot-umap-Metastasis}
+DimPlot(seurat, reduction = "umap", group.by = 'Metastasis_n') + 
+  scale_color_manual(values = metastasis_color_maps)
+```
+
+```{r plot-umap-Metastasis-2, fig.height=4, fig.width=12}
+DimPlot(seurat, reduction = "umap", split.by = 'Metastasis_n') + 
+  scale_color_manual(values = cell_color_maps)
+```
+
+#### Origin2
+
+```{r plot-umap-origin2}
+DimPlot(seurat, reduction = "umap", group.by = 'Origin2') +
+  scale_color_manual(values = origin2_color_maps)
+```
+
+```{r plot-umap-origin2-2, fig.width=12, fig.height=10}
+DimPlot(seurat, reduction = "umap", split.by = 'Origin2', ncol = 3) +
+  scale_color_manual(values = cell_color_maps)
+```
+
+#### Origin3
+
+```{r plot-umap-origin3}
+DimPlot(seurat, reduction = "umap", group.by = 'Origin3') +
+  scale_color_manual(values = origin3_color_maps)
+```
+
+```{r plot-umap-origin3-2, fig.width=12, fig.height=10}
+DimPlot(seurat, reduction = "umap", split.by = 'Origin3', ncol = 3) +
+  scale_color_manual(values = cell_color_maps)
+```
+
+#### Drainage
+
+```{r plot-umap-Drainage}
+DimPlot(seurat, reduction = "umap", group.by = 'Drainage') + 
+  scale_color_manual(values = drainage_color_maps)
+```
+
+```{r plot-umap-Drainage-2, fig.height=4, fig.width=12}
+DimPlot(seurat, reduction = "umap", split.by = 'Drainage') + 
+  scale_color_manual(values = cell_color_maps)
+```
+
+#### PBMC
+
+```{r plot-umap-PBMC}
+if (sum(seurat$Tissue == 'PBMC') > 2) {
+  DimPlot(subset(seurat, subset = Tissue == 'PBMC'), reduction = "umap") + 
+    scale_color_manual(values = cell_color_maps)
+}
+```
+
+```{r plot-umap-PBMC-2, fig.width=9, fig.height=4}
+if (sum(seurat$Tissue == 'PBMC') > 2) {
+  DimPlot(subset(seurat, subset = Tissue == 'PBMC'), reduction = "umap", split.by = 'Origin') + 
+    scale_color_manual(values = cell_color_maps)
+}
+```
+
+### tSNE {.tabset}
+
+#### Cluster
+
+```{r plot-tsne-cluster}
+DimPlot(seurat, reduction = "tsne", label = T) +
+  scale_color_manual(values = cell_color_maps)
+```
+
+#### VDJ
+
+```{r plot-tsne-vdj}
+DimPlot(seurat, reduction = "tsne", label = F, group.by = 'VDJ') +
+  scale_color_manual(values = vdj_color_maps)
+```
+
+#### Tissue
+
+```{r plot-tsne-tissue}
+DimPlot(seurat, reduction = "tsne", group.by = 'Tissue') + 
+  scale_color_manual(values = tissue_color_maps)
+```
+
+```{r plot-tsne-tissue-2, fig.width=12, fig.height=8}
+DimPlot(seurat, reduction = "tsne", split.by = 'Tissue', ncol = 3) +
+  scale_color_manual(values = cell_color_maps)
+```
+
+#### Origin2_n
+
+```{r plot-tsne-Origin2_n}
+DimPlot(seurat, reduction = "tsne", group.by = 'Origin2_n') +
+  scale_color_manual(values = origin2_color_maps)
+```
+
+```{r plot-tsne-Origin2_n-2, fig.width=12, fig.height=10}
+DimPlot(seurat, reduction = "tsne", split.by = 'Origin2_n', ncol = 3) +
+  scale_color_manual(values = cell_color_maps)
+```
+
+#### Metastasis_n
+
+```{r plot-tsne-Metastasis}
+DimPlot(seurat, reduction = "tsne", group.by = 'Metastasis_n') + 
+  scale_color_manual(values = metastasis_color_maps)
+```
+
+```{r plot-tsne-Metastasis-2, fig.height=4, fig.width=12}
+DimPlot(seurat, reduction = "tsne", split.by = 'Metastasis_n') + 
+  scale_color_manual(values = cell_color_maps)
+```
+
+#### Origin2
+
+```{r plot-tsne-origin2}
+DimPlot(seurat, reduction = "tsne", group.by = 'Origin2') +
+  scale_color_manual(values = origin2_color_maps)
+```
+
+```{r plot-tsne-origin2-2, fig.width=12, fig.height=10}
+DimPlot(seurat, reduction = "tsne", split.by = 'Origin2', ncol = 3) +
+  scale_color_manual(values = cell_color_maps)
+```
+
+#### Origin3
+
+```{r plot-tsne-origin3}
+DimPlot(seurat, reduction = "tsne", group.by = 'Origin3') +
+  scale_color_manual(values = origin3_color_maps)
+```
+
+```{r plot-tsne-origin3-2, fig.width=12, fig.height=10}
+DimPlot(seurat, reduction = "tsne", split.by = 'Origin3', ncol = 3) +
+  scale_color_manual(values = cell_color_maps)
+```
+
+#### Drainage
+
+```{r plot-tsne-Drainage}
+DimPlot(seurat, reduction = "tsne", group.by = 'Drainage') + 
+  scale_color_manual(values = drainage_color_maps)
+```
+
+```{r plot-tsne-Drainage-2, fig.height=4, fig.width=12}
+DimPlot(seurat, reduction = "tsne", split.by = 'Drainage') + 
+  scale_color_manual(values = cell_color_maps)
+```
+
+#### Patient
+
+```{r plot-tsne-patient}
+DimPlot(seurat, reduction = "tsne", group.by = 'Patient') + 
+  scale_color_manual(values = patient_color_maps)
+```
+
+```{r plot-tsne-patient-2, fig.width=12, fig.height=8}
+DimPlot(seurat, reduction = "tsne", split.by = 'Patient', ncol = 3) +
+  scale_color_manual(values = cell_color_maps)
+```
+
+#### PBMC
+
+```{r plot-tsne-PBMC}
+if (sum(seurat$Tissue == 'PBMC') > 2) {
+  DimPlot(subset(seurat, subset = Tissue == 'PBMC'), reduction = "tsne") + 
+    scale_color_manual(values = cell_color_maps)
+}
+```
+
+```{r plot-tsne-PBMC-2, fig.width=9, fig.height=4}
+if (sum(seurat$Tissue == 'PBMC') > 2) {
+  DimPlot(subset(seurat, subset = Tissue == 'PBMC'), reduction = "tsne", split.by = 'Origin') + 
+    scale_color_manual(values = cell_color_maps)
+}
+```
+
+#### LN
+
+```{r plot-tsne-LN}
+if (sum(seurat$Tissue == 'LN') > 2) {
+  DimPlot(subset(seurat, subset = Tissue == 'LN'), reduction = "tsne") + 
+    scale_color_manual(values = cell_color_maps)
+}
+```
+
+```{r plot-tsne-LN-2, fig.width=12, fig.height=12}
+if (sum(seurat$Tissue == 'LN') > 2) {
+  DimPlot(subset(seurat, subset = Tissue == 'LN'), reduction = "tsne", split.by = 'Origin', ncol = 3) + 
+    scale_color_manual(values = cell_color_maps)
+}
+```
+
+```{r plot-tsne-LN-3, fig.width=10, fig.height=5}
+if (sum(seurat$Tissue == 'LN') > 2) {
+  DimPlot(subset(seurat, subset = Tissue == 'LN'), reduction = "tsne", split.by = 'Metastasis_n') + 
+    scale_color_manual(values = cell_color_maps)
+}
+```
+
+#### Tumor
+
+```{r plot-tsne-Tumor}
+if (sum(seurat$Tissue == 'Tumor') > 2) {
+  DimPlot(subset(seurat, subset = Tissue == 'Tumor'), reduction = "tsne", pt.size = 0.1) + 
+    scale_color_manual(values = cell_color_maps)
+}
+```
+
+```{r plot-tsne-Tumor-2, fig.width=12, fig.height=4}
+if (sum(seurat$Tissue == 'Tumor') > 2) {
+  DimPlot(subset(seurat, subset = Tissue == 'Tumor'), reduction = "tsne", split.by = 'Origin', pt.size = 0.1) + 
+    scale_color_manual(values = cell_color_maps)
+}
+```
+
+#### Origin
+
+```{r plot-tsne-origin}
+DimPlot(seurat, reduction = "tsne", group.by = 'Origin') +
+  scale_color_manual(values = origin_color_maps)
+```
+
+```{r plot-tsne-origin-2, fig.width=12, fig.height=16}
+DimPlot(seurat, reduction = "tsne", split.by = 'Origin', ncol = 4) +
+  scale_color_manual(values = cell_color_maps)
+```
+
+### PCA {.tabset}
+
+#### Cluster
+
+```{r plot-pca-cluster}
+DimPlot(seurat, reduction = "pca", label = T) +
+  scale_color_manual(values = cell_color_maps)
+```
+
+#### VDJ
+
+```{r plot-pca-vdj}
+DimPlot(seurat, reduction = "pca", label = F, group.by = 'VDJ') +
+  scale_color_manual(values = vdj_color_maps)
+```
+
+#### Tissue
+
+```{r plot-pca-tissue}
+DimPlot(seurat, reduction = "pca", group.by = 'Tissue') + 
+  scale_color_manual(values = tissue_color_maps)
+```
+
+```{r plot-pca-tissue-2, fig.width=12, fig.height=8}
+DimPlot(seurat, reduction = "pca", split.by = 'Tissue', ncol = 3) +
+  scale_color_manual(values = cell_color_maps)
+```
+
+#### Origin2_n
+
+```{r plot-pca-origin2_n}
+DimPlot(seurat, reduction = "pca", group.by = 'Origin2_n') +
+  scale_color_manual(values = origin2_color_maps)
+```
+
+```{r plot-pca-origin2_n-2, fig.width=12, fig.height=10}
+DimPlot(seurat, reduction = "pca", split.by = 'Origin2_n', ncol = 3) +
+  scale_color_manual(values = cell_color_maps)
+```
+
+#### Metastasis_n
+
+```{r plot-pca-Metastasis}
+DimPlot(seurat, reduction = "pca", group.by = 'Metastasis_n') + 
+  scale_color_manual(values = metastasis_color_maps)
+```
+
+```{r plot-pca-Metastasis-2, fig.height=4, fig.width=12}
+DimPlot(seurat, reduction = "pca", split.by = 'Metastasis_n') + 
+  scale_color_manual(values = cell_color_maps)
+```
+
+#### Origin2
+
+```{r plot-pca-origin2}
+DimPlot(seurat, reduction = "pca", group.by = 'Origin2') +
+  scale_color_manual(values = origin2_color_maps)
+```
+
+```{r plot-pca-origin2-2, fig.width=12, fig.height=10}
+DimPlot(seurat, reduction = "pca", split.by = 'Origin2', ncol = 3) +
+  scale_color_manual(values = cell_color_maps)
+```
+
+#### Origin3
+
+```{r plot-pca-origin3}
+DimPlot(seurat, reduction = "pca", group.by = 'Origin3') +
+  scale_color_manual(values = origin3_color_maps)
+```
+
+```{r plot-pca-origin3-2, fig.width=12, fig.height=10}
+DimPlot(seurat, reduction = "pca", split.by = 'Origin3', ncol = 3) +
+  scale_color_manual(values = cell_color_maps)
+```
+
+#### Drainage
+
+```{r plot-pca-Drainage}
+DimPlot(seurat, reduction = "pca", group.by = 'Drainage') + 
+  scale_color_manual(values = drainage_color_maps)
+```
+
+```{r plot-pca-Drainage-2, fig.height=4, fig.width=12}
+DimPlot(seurat, reduction = "pca", split.by = 'Drainage') + 
+  scale_color_manual(values = cell_color_maps)
+```
+
+#### Patient
+
+```{r plot-pca-patient}
+DimPlot(seurat, reduction = "pca", group.by = 'Patient') + 
+  scale_color_manual(values = patient_color_maps)
+```
+
+```{r plot-pca-patient-2, fig.width=12, fig.height=8}
+DimPlot(seurat, reduction = "pca", split.by = 'Patient', ncol = 3) +
+  scale_color_manual(values = cell_color_maps)
+```
+
+#### PBMC
+
+```{r plot-pca-PBMC}
+if (sum(seurat$Tissue == 'PBMC') > 2) {
+  DimPlot(subset(seurat, subset = Tissue == 'PBMC'), reduction = "pca") + 
+    scale_color_manual(values = cell_color_maps)
+}
+```
+
+```{r plot-pca-PBMC-2, fig.width=9, fig.height=4}
+if (sum(seurat$Tissue == 'PBMC') > 2) {
+  DimPlot(subset(seurat, subset = Tissue == 'PBMC'), reduction = "pca", split.by = 'Origin') + 
+    scale_color_manual(values = cell_color_maps)
+}
+```
+
+#### LN
+
+```{r plot-pca-LN}
+if (sum(seurat$Tissue == 'LN') > 2) {
+  DimPlot(subset(seurat, subset = Tissue == 'LN'), reduction = "pca") + 
+    scale_color_manual(values = cell_color_maps)
+}
+```
+
+```{r plot-pca-LN-2, fig.width=12, fig.height=12}
+if (sum(seurat$Tissue == 'LN') > 2) {
+  DimPlot(subset(seurat, subset = Tissue == 'LN'), reduction = "pca", split.by = 'Origin', ncol = 3) + 
+    scale_color_manual(values = cell_color_maps)
+}
+```
+
+```{r plot-pca-LN-3, fig.width=10, fig.height=5}
+if (sum(seurat$Tissue == 'LN') > 2) {
+  DimPlot(subset(seurat, subset = Tissue == 'LN'), reduction = "pca", split.by = 'Metastasis_n') + 
+    scale_color_manual(values = cell_color_maps)
+}
+```
+
+#### Tumor
+
+```{r plot-pca-Tumor}
+if (sum(seurat$Tissue == 'Tumor') > 2) {
+  DimPlot(subset(seurat, subset = Tissue == 'Tumor'), reduction = "pca", pt.size = 0.1) + 
+    scale_color_manual(values = cell_color_maps)
+}
+```
+
+```{r plot-pca-Tumor-2, fig.width=12, fig.height=4}
+if (sum(seurat$Tissue == 'Tumor') > 2) {
+  DimPlot(subset(seurat, subset = Tissue == 'Tumor'), reduction = "pca", split.by = 'Origin', pt.size = 0.1) + 
+    scale_color_manual(values = cell_color_maps)
+}
+```
+
+#### Origin
+
+```{r plot-pca-origin}
+DimPlot(seurat, reduction = "pca", group.by = 'Origin') +
+  scale_color_manual(values = origin_color_maps)
+```
+
+```{r plot-pca-origin-2, fig.width=12, fig.height=16}
+DimPlot(seurat, reduction = "pca", split.by = 'Origin', ncol = 4) +
+  scale_color_manual(values = cell_color_maps)
+```
+
+## Markers {.tabset}
+
+Find markers again
+
+```{r find-cell-markers, cache=FALSE, eval=FALSE}
+cell.markers = FindAllMarkers(seurat, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.5, verbose = T)
+write.table(cell.markers, file = here::here('output', DOCNAME, 'cell.markers.txt'), sep = '\t', quote = F, row.names = F)
+```
+
+```{r read-cell-markers, cache=FALSE, eval=FALSE}
+cell.markers = read.table(here::here('output', DOCNAME, 'cell.markers.txt'), header = T, sep = "\t", stringsAsFactors = F)
+DT::datatable(cell.markers %>% 
+                group_by(cluster) %>% 
+                top_n(n = 2, wt = avg_logFC))
+```
+
+Plot markers (main)
+
+```{r plot-cell-markers-main, fig.width=7.5, fig.height=1.2, cache=FALSE}
+p.marker.main = customFeaturePlot(seurat, features = c(
+  # T
+  "CD3D",
+  # B
+  "CD79A",
+  # mye
+  "LYZ",
+  # mast
+  "TPSAB1",
+  # epi
+  "KRT6A",
+  # fib
+  "COL1A2",
+  # endo
+  "CDH5",
+  # platelets
+  "PPBP"
+  # 
+)) %>%
+  wrap_plots(nrow = 1) & theme(plot.margin = margin(0))
+p.marker.main
+```
+
+Plot markers (supp.)
+
+```{r plot-cell-markers-supp, fig.width=7.5, fig.height=5, cache=FALSE}
+p.marker.supp = customFeaturePlot(seurat, features = c(
+  # T
+  'CD3D', 'CD3G', 'CD3E', 'CD2',
+  # B
+  'CD19', 'MS4A1', 'CD79A', 'IGHM',
+  # mye
+  "LYZ", "FCER1G", "TYROBP", "AIF1",
+  # mast
+  "TPSAB1", "TPSB2", "MS4A2", 'KIT',
+  # epi
+  "CNFN", "KRT6A", "CRNN", "KRT13",
+  # fib
+  'DCN', 'COL1A1', 'COL1A2', 'LUM',
+  # endo
+  "PECAM1", "CLDN5", "CDH5", "VWF",
+  # platelets
+  "PPBP", "PF4", "ITGA2B", "ITGB3"
+  # 
+)) %>%
+  wrap_plots(nrow = 4, byrow = FALSE) & theme(plot.margin = margin(0))
+p.marker.supp
+```
+
+### T cells
+
+```{r umap-tcells-markers, fig.width=8, fig.height=8}
+FeaturePlot1 <- function(seurat_obj, reduction, features) {
+  p <- FeaturePlot(seurat_obj, reduction = reduction, features = features, combine = FALSE)
+  p <- lapply(X = p, FUN = function(x) (x + NoLegend()))
+  patchwork::wrap_plots(p)
+}
+
+FeaturePlot1(seurat, 'umap', c('CD3D', 'CD3G', 'CD3E', 'CD2'))
+```
+
+### B cells
+
+```{r umap-bcells-markers, fig.width=8, fig.height=8}
+FeaturePlot1(seurat, 'umap', c('CD19', 'MS4A1', 'CD79A', 'IGHM'))
+```
+
+### Myeloid
+
+```{r umap-myeloid-markers, fig.width=8, fig.height=8}
+FeaturePlot1(seurat, 'umap', c("LYZ", "FCER1G", "TYROBP", "AIF1"))
+```
+
+### Mast cells
+
+```{r umap-Mast-markers, fig.width=8, fig.height=8}
+FeaturePlot1(seurat, 'umap', c("TPSAB1", "TPSB2", "MS4A2", 'KIT'))
+```
+
+### Epithelia
+
+```{r umap-epithelia-markers, fig.width=8, fig.height=8}
+epithelia_markers = c("KRT13", "SPRR3", "CNFN", "KRT6A", "CRNN", "CSTA", "SOX2", "TP63", "EPCAM")
+FeaturePlot1(seurat, 'umap', epithelia_markers)
+```
+
+### Fibroblasts
+
+```{r umap-fibroblasts-markers, fig.width=8, fig.height=8}
+FeaturePlot1(seurat, 'umap', c('DCN', 'COL1A1', 'COL1A2', 'LUM'))
+```
+
+### Endothelia
+
+```{r umap-endothelia-markers, fig.width=10, fig.height=6}
+FeaturePlot1(seurat, 'umap', markers.endothelia)
+```
+
+### Pericyte
+
+```{r umap-Pericyte-markers, fig.width=10, fig.height=6}
+FeaturePlot1(seurat, 'umap', markers.pericyte)
+```
+
+### Mesothelia
+
+```{r umap-Mesothelia-markers, fig.width=6, fig.height=6}
+FeaturePlot1(seurat, 'umap', markers.mesothelia)
+```
+
+### Platelets
+
+```{r umap-Platelets-markers, fig.width=8, fig.height=8}
+FeaturePlot1(seurat, 'umap', markers.platelets)
+```
+
+## Cluster quality
+
+```{r cluster-qc, fig.width=7, fig.height=5, cache=FALSE}
+p.quality.nCount_RNA = seurat@meta.data %>%
+  group_by(cellType, nCount_RNA) %>%
+  summarise() %>%
+  ggplot(aes(cellType, nCount_RNA)) +
+  stat_boxplot(geom = "errorbar", width = 0.4) +
+  geom_boxplot(aes(fill = 'blue'), outlier.alpha = 0.1, color = '#00008f') +
+  scale_fill_manual(values = '#8f8fb1') +
+  scale_y_log10(breaks = trans_breaks("log10", function(x) 10^x),
+                labels = trans_format("log10", math_format(10^.x))) +
+  theme(axis.title.y = element_blank(),
+        legend.position = "none") +
+  coord_flip()
+
+p.quality.nFeature_RNA = seurat@meta.data %>%
+  group_by(cellType, nFeature_RNA) %>%
+  summarise() %>%
+  ggplot(aes(cellType, nFeature_RNA)) +
+  stat_boxplot(geom = "errorbar", width = 0.4) +
+  geom_boxplot(aes(fill = 'blue'), outlier.alpha = 0.1, color = '#00008f') +
+  scale_fill_manual(values = '#8f8fb1') +
+  scale_y_log10(breaks = trans_breaks("log10", function(x) 10^x),
+                labels = trans_format("log10", math_format(10^.x))) +
+  theme(axis.title.y = element_blank(),
+        legend.position = "none") +
+  coord_flip()
+
+features.to.plot = c('percent.mt', 'percent.ribo',
+                     'percent.dissociation', 'percent.heat')
+p_list = map(features.to.plot, feature_box, seurat_obj = seurat, groupby = 'cellType')
+
+
+p_list = list(p.quality.nCount_RNA, p.quality.nFeature_RNA,
+              p_list[[1]], p_list[[2]], p_list[[3]], p_list[[4]])
+
+p.quality = p_list %>%
+  wrap_plots(ncol = 3)
+p.quality
+```
+
+## Percent of VDJ
+
+```{r percent-vdj, fig.height=4, fig.width=6}
+percent_vdj(seurat, groupby = 'cellType')
+```
+
+## cellType compositions
+
+```{r cell-proportion, fig.height=2.5, fig.width=7.5, cache=FALSE}
+p.composition = cluster_stack(seurat, group_by = "cellType")
+p.composition
+```
+
+Tissue/Origin3/Origin
+
+```{r cell-proportion-2, fig.height=3.5, fig.width=10, cache=FALSE}
+cluster_stack2(seurat, group_by = "cellType")
+```
+
+## Sample composition
+
+Source
+
+```{r sample-compositions, fig.width=10, fig.height=3}
+PlotSampleFraction(seurat_obj = seurat, 'cellType', cell_color_maps)
+```
+
+Origin2_n by cellType
+
+```{r sample-compositions-Origin2_n, fig.width=7, fig.height=3}
+p.cell_by_origin2 = seurat@meta.data %>%
+  filter(cellType != "Platelets") %>%
+  group_by(Origin2_n, cellType) %>%
+  summarise(n = n()) %>%
+  mutate(prop = n/sum(n) * 100) %>%
+  ggplot(aes(x = cellType, y = prop, fill = Origin2_n)) + 
+  #geom_col(color = 'white', width = .8) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual(values = origin2_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  guides(fill = guide_legend(ncol = 1)) +
+  labs(x = NULL, y = "Fraction (%)", fill = NULL) +
+  theme(legend.position = "right",
+        axis.text.x = element_text(angle = 60, hjust = 1))
+p.cell_by_origin2
+```
+
+Origin2_n by cellType by Patient
+
+```{r sample-compositions-Origin2_n-by-Patient, fig.width=7.5, fig.height=4}
+seurat@meta.data %>%
+  filter(cellType != "Platelets") %>%
+  group_by(Patient, Origin2_n, cellType) %>%
+  summarise(n = n()) %>%
+  mutate(prop = n/sum(n) * 100) %>%
+  ggplot(aes(x = cellType, y = prop, fill = Origin2_n)) + 
+  #geom_col(color = 'white', width = .8) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual(values = origin2_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  facet_wrap(.~Patient) +
+  guides(fill = guide_legend(ncol = 1)) +
+  labs(x = NULL, y = "Fraction (%)", fill = NULL) +
+  theme(legend.position = "right",
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+Another way to show
+
+```{r sample-compositions-Origin2_n-by-Patient-2, fig.width=7.5, fig.height=3}
+p.cell_by_origin2 = seurat@meta.data %>%
+  filter(cellType != "Platelets") %>%
+  group_by(Patient, Origin2_n, cellType) %>%
+  summarise(n = n()) %>%
+  mutate(prop = n/sum(n) * 100) %>%
+  ggplot(aes(x = Origin2_n, y = prop, fill = cellType)) + 
+  geom_col(color = 'white', width = .8) +
+  scale_fill_manual(values = cell_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  facet_grid(.~Patient) +
+  guides(fill = guide_legend(nrow = 1)) +
+  labs(x = NULL, y = "Fraction", fill = NULL) +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 60, hjust = 1))
+p.cell_by_origin2
+```
+
+
+## Enrichment by {.tabset}
+
+### Origin2_n
+
+```{r Origin2_n-enrichment, fig.width=4, fig.height=3, cache=FALSE}
+cluster_cellNum = seurat@meta.data %>% 
+  group_by(cellType) %>% 
+  summarise(cluster.cell_num = n()) %>%
+  mutate(cluster.cell_num = as.numeric(cluster.cell_num))
+
+origin2_CellNum = seurat@misc$sam_info %>%
+  group_by(Origin2_n) %>%
+  summarise(origin.cell_num = sum(cell.filtered)) %>%
+  mutate(origin.cell_num = as.numeric(origin.cell_num)) %>%
+  mutate(total = sum(origin.cell_num)) %>%
+  mutate(total = as.numeric(total))
+
+cluster_byOrigin2 = seurat@meta.data %>%
+  group_by(cellType, Origin2_n) %>% 
+  summarise(o = n()) %>%
+  mutate(o = as.numeric(o))
+
+# add origins not existing
+tmp = setdiff(levels(cluster_byOrigin2$Origin2_n), cluster_byOrigin2$Origin2_n)
+if (length(tmp) > 0) {
+  for (t in tmp) {
+    x = tibble(cellType = levels(cluster_cellNum$cellType), Origin2_n = t, o = 0)
+    cluster_byOrigin2 = bind_rows(cluster_byOrigin2, x)
+  }
+}
+
+r_oe = cluster_byOrigin2 %>%
+  left_join(origin2_CellNum, by = 'Origin2_n') %>%
+  left_join(cluster_cellNum, by = 'cellType') %>%
+  mutate(e = (origin.cell_num * cluster.cell_num)/total) %>%
+  mutate(r = o/e) %>%
+  dplyr::select(cellType, Origin2_n, r) %>% 
+  spread(Origin2_n, r, fill = 0) %>% 
+  column_to_rownames("cellType")
+
+# use ggplot for better control
+p.enrich.origin2 = plot_origin2_enrich(r_oe)
+p.enrich.origin2
+```
+
+### Tissue
+
+```{r tissue-enrichment, fig.width=4, fig.height=4, cache=FALSE}
+cluster_cellNum = seurat@meta.data %>% 
+  group_by(cellType) %>% 
+  summarise(cluster.cell_num = n()) %>%
+  mutate(cluster.cell_num = as.numeric(cluster.cell_num))
+
+tissue_CellNum = seurat@misc$sam_info %>%
+  group_by(Tissue) %>%
+  summarise(tissue.cell_num = sum(cell.filtered)) %>%
+  mutate(tissue.cell_num = as.numeric(tissue.cell_num)) %>%
+  mutate(total = sum(tissue.cell_num)) %>%
+  mutate(total = as.numeric(total))
+
+cluster_byTissue = seurat@meta.data %>%
+  group_by(cellType, Tissue) %>% 
+  summarise(o = n()) %>%
+  mutate(o = as.numeric(o))
+
+# add tissues not existing
+tmp = setdiff(levels(cluster_byTissue$Tissue), cluster_byTissue$Tissue)
+if (length(tmp) > 0) {
+  for (t in tmp) {
+    x = tibble(cellType = levels(cluster_byTissue$cellType), Tissue = t, o = 0)
+    cluster_byTissue = bind_rows(cluster_byTissue, x)
+  }
+}
+
+r_oe = cluster_byTissue %>%
+  left_join(tissue_CellNum, by = 'Tissue') %>%
+  left_join(cluster_cellNum, by = 'cellType') %>%
+  mutate(e = (tissue.cell_num * cluster.cell_num)/total) %>%
+  mutate(r = o/e) %>%
+  dplyr::select(cellType, Tissue, r) %>% 
+  spread(Tissue, r, fill = 0) %>% 
+  column_to_rownames("cellType")
+
+# use ggplot for better control
+gg = plot_tissue_enrich(r_oe)
+gg
+```
+
+### Origin3
+
+```{r origin3-enrichment, fig.width=5, fig.height=4, cache=FALSE}
+cluster_cellNum = seurat@meta.data %>% 
+  group_by(cellType) %>% 
+  summarise(cluster.cell_num = n()) %>%
+  mutate(cluster.cell_num = as.numeric(cluster.cell_num))
+
+origin_CellNum = seurat@misc$sam_info %>%
+  group_by(Origin3) %>%
+  summarise(origin.cell_num = sum(cell.filtered)) %>%
+  mutate(origin.cell_num = as.numeric(origin.cell_num)) %>%
+  mutate(total = sum(origin.cell_num)) %>%
+  mutate(total = as.numeric(total))
+
+cluster_byOrigin3 = seurat@meta.data %>% 
+  group_by(cellType, Origin3) %>% 
+  summarise(o = n()) %>%
+  mutate(o = as.numeric(o))
+
+# add origins not existing
+tmp = setdiff(levels(cluster_byOrigin3$Origin3), cluster_byOrigin3$Origin3)
+if (length(tmp) > 0) {
+  for (t in tmp) {
+    x = tibble(cellType = levels(cluster_cellNum$cellType), Origin3 = t, o = 0)
+    cluster_byOrigin3 = bind_rows(cluster_byOrigin3, x)
+  }
+}
+
+r_oe = cluster_byOrigin3 %>%
+  left_join(origin_CellNum, by = 'Origin3') %>%
+  left_join(cluster_cellNum, by = 'cellType') %>%
+  mutate(e = (origin.cell_num * cluster.cell_num)/total) %>%
+  mutate(r = o/e) %>%
+  dplyr::select(cellType, Origin3, r) %>% 
+  spread(Origin3, r, fill = 0) %>% 
+  column_to_rownames("cellType")
+
+# use ggplot for better control
+gg = plot_origin3_enrich(r_oe)
+gg
+```
+
+### Metastasis P/N patient: Tumor
+
+```{r Metastasis-p-n-patient-tumor-enrichment, fig.width=2.5, fig.height=4, cache=FALSE}
+patient_info = tibble(Patient = c("S0619", "S0730", "S0819", "S0920", "S1125", "S1204"),
+                      Metastatic = c('P', 'N', 'N', 'N', 'P', 'P'))
+
+cluster_cellNum = seurat@meta.data %>% 
+  group_by(cellType) %>% 
+  summarise(cluster.cell_num = n()) %>%
+  mutate(cluster.cell_num = as.numeric(cluster.cell_num))
+
+patient_CellNum = seurat@misc$sam_info %>%
+  filter(Tissue == 'Tumor') %>%
+  left_join(patient_info, by = 'Patient') %>%
+  group_by(Metastatic) %>%
+  summarise(patient.cell_num = sum(cell.filtered)) %>%
+  mutate(patient.cell_num = as.numeric(patient.cell_num)) %>%
+  mutate(total = sum(patient.cell_num)) %>%
+  mutate(total = as.numeric(total))
+
+cluster_byPatient = seurat@meta.data %>% 
+  filter(Tissue == 'Tumor') %>%
+  left_join(patient_info, by = 'Patient') %>%
+  group_by(cellType, Metastatic) %>% 
+  summarise(o = n()) %>%
+  mutate(o = as.numeric(o))
+
+# add origins not existing
+tmp = setdiff(c("N", "P"), cluster_byPatient$Metastatic)
+if (length(tmp) > 0) {
+  for (t in tmp) {
+    x = tibble(cellType = levels(cluster_cellNum$cellType), Metastatic = t, o = 0)
+    cluster_byPatient = bind_rows(cluster_byPatient, x)
+  }
+}
+
+r_oe = cluster_byPatient %>%
+  left_join(patient_CellNum, by = 'Metastatic') %>%
+  left_join(cluster_cellNum, by = 'cellType') %>%
+  mutate(e = (patient.cell_num * cluster.cell_num)/total) %>%
+  mutate(r = o/e) %>%
+  dplyr::select(cellType, Metastatic, r) %>% 
+  spread(Metastatic, r, fill = 0) %>% 
+  column_to_rownames("cellType")
+
+# use ggplot for better control
+gg = plot_metastasis_enrich(r_oe)
+gg
+```
+
+### Metastasis P/N patient: Adjacent
+
+```{r Metastasis-p-n-patient-Adjacent-enrichment, fig.width=2.5, fig.height=4, cache=FALSE}
+patient_info = tibble(Patient = c("S0619", "S0730", "S0819", "S0920", "S1125", "S1204"),
+                      Metastatic = c('P', 'N', 'N', 'N', 'P', 'P'))
+
+cluster_cellNum = seurat@meta.data %>% 
+  group_by(cellType) %>% 
+  summarise(cluster.cell_num = n()) %>%
+  mutate(cluster.cell_num = as.numeric(cluster.cell_num))
+
+patient_CellNum = seurat@misc$sam_info %>%
+  filter(Tissue == 'Adjacent') %>%
+  left_join(patient_info, by = 'Patient') %>%
+  group_by(Metastatic) %>%
+  summarise(patient.cell_num = sum(cell.filtered)) %>%
+  mutate(patient.cell_num = as.numeric(patient.cell_num)) %>%
+  mutate(total = sum(patient.cell_num)) %>%
+  mutate(total = as.numeric(total))
+
+cluster_byPatient = seurat@meta.data %>% 
+  filter(Tissue == 'Adjacent') %>%
+  left_join(patient_info, by = 'Patient') %>%
+  group_by(cellType, Metastatic) %>% 
+  summarise(o = n()) %>%
+  mutate(o = as.numeric(o))
+
+# add origins not existing
+tmp = setdiff(c("N", "P"), cluster_byPatient$Metastatic)
+if (length(tmp) > 0) {
+  for (t in tmp) {
+    x = tibble(cellType = levels(cluster_cellNum$cellType), Metastatic = t, o = 0)
+    cluster_byPatient = bind_rows(cluster_byPatient, x)
+  }
+}
+
+r_oe = cluster_byPatient %>%
+  left_join(patient_CellNum, by = 'Metastatic') %>%
+  left_join(cluster_cellNum, by = 'cellType') %>%
+  mutate(e = (patient.cell_num * cluster.cell_num)/total) %>%
+  mutate(r = o/e) %>%
+  dplyr::select(cellType, Metastatic, r) %>% 
+  spread(Metastatic, r, fill = 0) %>% 
+  column_to_rownames("cellType")
+
+# use ggplot for better control
+gg = plot_metastasis_enrich(r_oe)
+gg
+```
+
+### Metastasis P/N patient: Normal
+
+```{r Metastasis-p-n-patient-Normal-enrichment, fig.width=2.5, fig.height=4, cache=FALSE}
+patient_info = tibble(Patient = c("S0619", "S0730", "S0819", "S0920", "S1125", "S1204"),
+                      Metastatic = c('P', 'N', 'N', 'N', 'P', 'P'))
+
+cluster_cellNum = seurat@meta.data %>% 
+  group_by(cellType) %>% 
+  summarise(cluster.cell_num = n()) %>%
+  mutate(cluster.cell_num = as.numeric(cluster.cell_num))
+
+patient_CellNum = seurat@misc$sam_info %>%
+  filter(Tissue == 'Normal') %>%
+  left_join(patient_info, by = 'Patient') %>%
+  group_by(Metastatic) %>%
+  summarise(patient.cell_num = sum(cell.filtered)) %>%
+  mutate(patient.cell_num = as.numeric(patient.cell_num)) %>%
+  mutate(total = sum(patient.cell_num)) %>%
+  mutate(total = as.numeric(total))
+
+cluster_byPatient = seurat@meta.data %>% 
+  filter(Tissue == 'Normal') %>%
+  left_join(patient_info, by = 'Patient') %>%
+  group_by(cellType, Metastatic) %>% 
+  summarise(o = n()) %>%
+  mutate(o = as.numeric(o))
+
+# add origins not existing
+tmp = setdiff(c("N", "P"), cluster_byPatient$Metastatic)
+if (length(tmp) > 0) {
+  for (t in tmp) {
+    x = tibble(cellType = levels(cluster_cellNum$cellType), Metastatic = t, o = 0)
+    cluster_byPatient = bind_rows(cluster_byPatient, x)
+  }
+}
+
+r_oe = cluster_byPatient %>%
+  left_join(patient_CellNum, by = 'Metastatic') %>%
+  left_join(cluster_cellNum, by = 'cellType') %>%
+  mutate(e = (patient.cell_num * cluster.cell_num)/total) %>%
+  mutate(r = o/e) %>%
+  dplyr::select(cellType, Metastatic, r) %>% 
+  spread(Metastatic, r, fill = 0) %>% 
+  column_to_rownames("cellType")
+
+# use ggplot for better control
+gg = plot_metastasis_enrich(r_oe)
+gg
+```
+
+### Metastasis P/N patient: PBMC
+
+```{r Metastasis-p-n-patient-PBMC-enrichment, fig.width=2.5, fig.height=4, cache=FALSE}
+patient_info = tibble(Patient = c("S0619", "S0730", "S0819", "S0920", "S1125", "S1204"),
+                      Metastatic = c('P', 'N', 'N', 'N', 'P', 'P'))
+
+cluster_cellNum = seurat@meta.data %>% 
+  group_by(cellType) %>% 
+  summarise(cluster.cell_num = n()) %>%
+  mutate(cluster.cell_num = as.numeric(cluster.cell_num))
+
+patient_CellNum = seurat@misc$sam_info %>%
+  filter(Tissue == 'PBMC') %>%
+  left_join(patient_info, by = 'Patient') %>%
+  group_by(Metastatic) %>%
+  summarise(patient.cell_num = sum(cell.filtered)) %>%
+  mutate(patient.cell_num = as.numeric(patient.cell_num)) %>%
+  mutate(total = sum(patient.cell_num)) %>%
+  mutate(total = as.numeric(total))
+
+cluster_byPatient = seurat@meta.data %>% 
+  filter(Tissue == 'PBMC') %>%
+  left_join(patient_info, by = 'Patient') %>%
+  group_by(cellType, Metastatic) %>% 
+  summarise(o = n()) %>%
+  mutate(o = as.numeric(o))
+
+# add origins not existing
+tmp = setdiff(c("N", "P"), cluster_byPatient$Metastatic)
+if (length(tmp) > 0) {
+  for (t in tmp) {
+    x = tibble(cellType = levels(cluster_cellNum$cellType), Metastatic = t, o = 0)
+    cluster_byPatient = bind_rows(cluster_byPatient, x)
+  }
+}
+
+r_oe = cluster_byPatient %>%
+  left_join(patient_CellNum, by = 'Metastatic') %>%
+  left_join(cluster_cellNum, by = 'cellType') %>%
+  mutate(e = (patient.cell_num * cluster.cell_num)/total) %>%
+  mutate(r = o/e) %>%
+  dplyr::select(cellType, Metastatic, r) %>% 
+  spread(Metastatic, r, fill = 0) %>% 
+  column_to_rownames("cellType")
+
+# use ggplot for better control
+gg = plot_metastasis_enrich(r_oe)
+gg
+```
+
+### Metastasis P/N patient: LN
+
+```{r Metastasis-p-n-patient-LN-enrichment, fig.width=2.5, fig.height=4, cache=FALSE}
+patient_info = tibble(Patient = c("S0619", "S0730", "S0819", "S0920", "S1125", "S1204"),
+                      Metastatic = c('P', 'N', 'N', 'N', 'P', 'P'))
+
+cluster_cellNum = seurat@meta.data %>% 
+  group_by(cellType) %>% 
+  summarise(cluster.cell_num = n()) %>%
+  mutate(cluster.cell_num = as.numeric(cluster.cell_num))
+
+patient_CellNum = seurat@misc$sam_info %>%
+  filter(Tissue == 'LN') %>%
+  left_join(patient_info, by = 'Patient') %>%
+  group_by(Metastatic) %>%
+  summarise(patient.cell_num = sum(cell.filtered)) %>%
+  mutate(patient.cell_num = as.numeric(patient.cell_num)) %>%
+  mutate(total = sum(patient.cell_num)) %>%
+  mutate(total = as.numeric(total))
+
+cluster_byPatient = seurat@meta.data %>% 
+  filter(Tissue == 'LN') %>%
+  left_join(patient_info, by = 'Patient') %>%
+  group_by(cellType, Metastatic) %>% 
+  summarise(o = n()) %>%
+  mutate(o = as.numeric(o))
+
+r_oe = cluster_byPatient %>%
+  left_join(patient_CellNum, by = 'Metastatic') %>%
+  left_join(cluster_cellNum, by = 'cellType') %>%
+  mutate(e = (patient.cell_num * cluster.cell_num)/total) %>%
+  mutate(r = o/e) %>%
+  dplyr::select(cellType, Metastatic, r) %>% 
+  spread(Metastatic, r, fill = 0) %>% 
+  column_to_rownames("cellType")
+
+# use ggplot for better control
+gg = plot_metastasis_enrich(r_oe)
+gg
+```
+
+### Origin
+
+```{r origin-enrichment, fig.width=8, fig.height=4, cache=FALSE}
+cluster_cellNum = seurat@meta.data %>% 
+  group_by(cellType) %>% 
+  summarise(cluster.cell_num = n()) %>%
+  mutate(cluster.cell_num = as.numeric(cluster.cell_num))
+
+origin_CellNum = seurat@misc$sam_info %>%
+  group_by(Origin) %>%
+  summarise(origin.cell_num = sum(cell.filtered)) %>%
+  mutate(origin.cell_num = as.numeric(origin.cell_num)) %>%
+  mutate(total = sum(origin.cell_num)) %>%
+  mutate(total = as.numeric(total))
+
+cluster_byOrigin = seurat@meta.data %>% 
+  group_by(cellType, Origin) %>% 
+  summarise(o = n()) %>%
+  mutate(o = as.numeric(o))
+
+# add origins not existing
+tmp = setdiff(levels(cluster_byOrigin$Origin), cluster_byOrigin$Origin)
+if (length(tmp) > 0) {
+  for (t in tmp) {
+    x = tibble(cellType = levels(cluster_cellNum$cellType), Origin = t, o = 0)
+    cluster_byOrigin = bind_rows(cluster_byOrigin, x)
+  }
+}
+
+r_oe = cluster_byOrigin %>%
+  left_join(origin_CellNum, by = 'Origin') %>%
+  left_join(cluster_cellNum, by = 'cellType') %>%
+  mutate(e = (origin.cell_num * cluster.cell_num)/total) %>%
+  mutate(r = o/e) %>%
+  dplyr::select(cellType, Origin, r) %>% 
+  spread(Origin, r, fill = 0) %>% 
+  column_to_rownames("cellType")
+
+# use ggplot for better control
+gg = plot_origin_enrich(r_oe)
+gg
+```
+
+## Cell number {.tabset}
+
+```{r cell-num, fig.width=10, fig.height=15}
+p_cluster = seurat@meta.data %>%
+  group_by(cellType) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  ggplot(aes("", Percent, fill = cellType)) +
+  geom_bar(width = 1, size = 1, color = "white", stat = "identity") +
+  coord_polar("y") +
+  geom_text_repel(aes(label = paste0(round(Percent, 1), "%")), 
+            position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, y = NULL, fill = NULL, title = 'cellType') +
+  scale_fill_manual(values = cell_color_maps)  +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+
+p_tissue = seurat@meta.data %>%
+  group_by(Tissue) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  ggplot(aes("", Percent, fill = Tissue)) +
+  geom_bar(width = 1, size = 1, color = "white", stat = "identity") +
+  coord_polar("y") +
+  geom_text(aes(label = paste0(round(Percent, 1), "%")), 
+            position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, y = NULL, fill = NULL, title = 'Tissue') +
+  scale_fill_manual(values = tissue_color_maps)  +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+
+p_origin = seurat@meta.data %>%
+  group_by(Origin) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  ggplot(aes("", Percent, fill = Origin)) +
+  geom_bar(width = 1, size = 1, color = "white", stat = "identity") +
+  coord_polar("y") +
+  geom_text_repel(aes(label = paste0(round(Percent, 1), "%")), 
+            position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, y = NULL, fill = NULL, title = 'Origin') +
+  scale_fill_manual(values = origin_color_maps)  +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+
+p_origin2 = seurat@meta.data %>%
+  group_by(Origin2_n) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  ggplot(aes("", Percent, fill = Origin2_n)) +
+  geom_bar(width = 1, size = 1, color = "white", stat = "identity") +
+  coord_polar("y") +
+  geom_text_repel(aes(label = paste0(round(Percent, 1), "%")), 
+            position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, y = NULL, fill = NULL, title = 'Origin2_n') +
+  scale_fill_manual(values = origin2_color_maps)  +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+
+p_origin3 = seurat@meta.data %>%
+  group_by(Origin3) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  ggplot(aes("", Percent, fill = Origin3)) +
+  geom_bar(width = 1, size = 1, color = "white", stat = "identity") +
+  coord_polar("y") +
+  geom_text_repel(aes(label = paste0(round(Percent, 1), "%")), 
+            position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, y = NULL, fill = NULL, title = 'Origin3') +
+  scale_fill_manual(values = origin3_color_maps)  +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+
+p_metastasis = seurat@meta.data %>%
+  group_by(Metastasis_n) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  ggplot(aes("", Percent, fill = Metastasis_n)) +
+  geom_bar(width = 1, size = 1, color = "white", stat = "identity") +
+  coord_polar("y") +
+  geom_text_repel(aes(label = paste0(round(Percent, 1), "%")), 
+            position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, y = NULL, fill = NULL, title = 'Metastasis_n') +
+  scale_fill_manual(values = metastasis_color_maps)  +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+
+p_drainage = seurat@meta.data %>%
+  group_by(Drainage) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  ggplot(aes("", Percent, fill = Drainage)) +
+  geom_bar(width = 1, size = 1, color = "white", stat = "identity") +
+  coord_polar("y") +
+  geom_text_repel(aes(label = paste0(round(Percent, 1), "%")), 
+            position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, y = NULL, fill = NULL, title = 'Drainage') +
+  scale_fill_manual(values = drainage_color_maps)  +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+
+p_patient = seurat@meta.data %>%
+  group_by(Patient) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  ggplot(aes("", Percent, fill = Patient)) +
+  geom_bar(width = 1, size = 1, color = "white", stat = "identity") +
+  coord_polar("y") +
+  geom_text_repel(aes(label = paste0(round(Percent, 1), "%")), 
+            position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, y = NULL, fill = NULL, title = 'Patient') +
+  scale_fill_manual(values = patient_color_maps)  +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+
+p_cluster + p_tissue +
+  p_metastasis + p_origin2 +
+  p_drainage + p_origin3 +
+  p_patient + p_origin +
+  plot_layout(ncol = 2)
+```
+
+### cellType
+
+```{r cell-num-cellType, cache=FALSE}
+DT::datatable(
+  seurat@meta.data %>% 
+    group_by(cellType) %>% 
+    summarise(n = n()) %>% 
+    mutate(Percent = n/sum(n) * 100),
+  filter = 'top'
+)
+```
+
+### Tissue
+
+```{r cell-num-Tissue, cache=FALSE}
+DT::datatable(
+  seurat@meta.data %>%
+    group_by(Tissue) %>%
+    summarise(n = n()) %>%
+    mutate(Percent = n/sum(n) * 100),
+  filter = 'top'
+)
+```
+
+### Origin2_n
+
+```{r cell-num-Origin2_n, cache=FALSE}
+DT::datatable(
+  seurat@meta.data %>%
+    group_by(Origin2_n) %>%
+    summarise(n = n()) %>%
+    mutate(Percent = n/sum(n) * 100),
+  filter = 'top'
+)
+```
+
+### Origin3
+
+```{r cell-num-Origin3, cache=FALSE}
+DT::datatable(
+  seurat@meta.data %>%
+    group_by(Origin3) %>%
+    summarise(n = n()) %>%
+    mutate(Percent = n/sum(n) * 100),
+  filter = 'top'
+)
+```
+
+### Patient
+
+```{r cell-num-Patient, cache=FALSE}
+DT::datatable(
+  seurat@meta.data %>%
+    group_by(Patient) %>%
+    summarise(n = n()) %>%
+    mutate(Percent = n/sum(n) * 100),
+  filter = 'top'
+)
+```
+
+### Origin
+
+```{r cell-num-Origin, cache=FALSE}
+DT::datatable(
+  seurat@meta.data %>%
+    group_by(Origin) %>%
+    summarise(n = n()) %>%
+    mutate(Percent = n/sum(n) * 100),
+  filter = 'top'
+)
+```
+
+### Source
+
+```{r cell-num-Source, cache=FALSE}
+DT::datatable(
+  seurat@meta.data %>%
+    group_by(Source) %>%
+    summarise(n = n()) %>%
+    mutate(Percent = n/sum(n) * 100),
+  filter = 'top'
+)
+```
+
+## ... by cluster {.tabset}
+
+```{r Tissue-by-cluster, fig.width=8, fig.height=12}
+p_tissue = seurat@meta.data %>% 
+  group_by(Tissue, cellType) %>% 
+  summarise(n = n()) %>% 
+  mutate(Percent = n/sum(n) * 100) %>%
+  ggplot(aes(x = Tissue, y = Percent, fill = cellType)) + 
+  geom_bar(stat = 'identity', color = 'white') +
+  labs(x = NULL, fill = NULL) +
+  scale_fill_manual(values = cell_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+p_patient = seurat@meta.data %>% 
+  group_by(Patient, cellType) %>% 
+  summarise(n = n()) %>% 
+  mutate(Percent = n/sum(n) * 100) %>%
+  ggplot(aes(x = Patient, y = Percent, fill = cellType)) + 
+  geom_bar(stat = 'identity', color = 'white') +
+  labs(x = NULL, fill = NULL) +
+  scale_fill_manual(values = cell_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+p_origin = seurat@meta.data %>% 
+  group_by(Origin, cellType) %>% 
+  summarise(n = n()) %>% 
+  mutate(Percent = n/sum(n) * 100) %>%
+  ggplot(aes(x = Origin, y = Percent, fill = cellType)) + 
+  geom_bar(stat = 'identity', color = 'white') +
+  labs(x = NULL, fill = NULL) +
+  scale_fill_manual(values = cell_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+p_origin2 = seurat@meta.data %>% 
+  group_by(Origin2_n, cellType) %>% 
+  summarise(n = n()) %>% 
+  mutate(Percent = n/sum(n) * 100) %>%
+  ggplot(aes(x = Origin2_n, y = Percent, fill = cellType)) + 
+  geom_bar(stat = 'identity', color = 'white') +
+  labs(x = NULL, fill = NULL) +
+  scale_fill_manual(values = cell_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+p_origin3 = seurat@meta.data %>% 
+  group_by(Origin3, cellType) %>% 
+  summarise(n = n()) %>% 
+  mutate(Percent = n/sum(n) * 100) %>%
+  ggplot(aes(x = Origin3, y = Percent, fill = cellType)) + 
+  geom_bar(stat = 'identity', color = 'white') +
+  labs(x = NULL, fill = NULL) +
+  scale_fill_manual(values = cell_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+#(p1 + p2 + p3 + p4)/p5 +
+#  plot_layout(guides = 'collect')
+p1 = p_origin2 + p_patient
+p2 = p_tissue | p_origin3
+p3 = p_origin
+p1/p2/p3 +
+  plot_layout(guides = 'collect')
+```
+
+### Tissue
+
+```{r cell-num-tissue-by-cellType}
+DT::datatable(
+  seurat@meta.data %>%
+    group_by(Tissue, cellType) %>%
+    summarise(n = n()) %>%
+    mutate(Percent = n/sum(n) * 100),
+  filter = 'top'
+)
+```
+
+```{r frac-Tissue, fig.width=8, fig.height=10}
+Tissues = c("PBMC", 'LN', 'Normal', "Adjacent", "Tumor")
+sapply(Tissues, PlotFracTissue, seurat_obj = seurat, groupby = 'cellType', color_maps = cell_color_maps, simplify = F) %>%
+  wrap_plots() +
+  plot_layout(ncol = 2, guides = 'collect')
+```
+
+### Origin2_n
+
+```{r cell-num-Origin2_n-by-cluster}
+DT::datatable(
+  seurat@meta.data %>%
+    group_by(Origin2_n, cellType) %>%
+    summarise(n = n()) %>%
+    mutate(Percent = n/sum(n) * 100),
+  filter = 'top'
+)
+```
+
+```{r frac-Origin2_n, fig.width=12, fig.height=12}
+Origin2s_n = intersect(levels(seurat$Origin2_n), unique(seurat$Origin2_n))
+sapply(Origin2s_n, PlotFrac, seurat_obj = seurat, plot_what = "Origin2_n", groupby = "cellType", color_maps = cell_color_maps, simplify = F) %>%
+  wrap_plots() +
+  plot_layout(ncol = 3, guides = 'collect')
+```
+
+### Origin3
+
+```{r cell-num-Origin3-by-cluster}
+DT::datatable(
+  seurat@meta.data %>%
+    group_by(Origin3, cellType) %>%
+    summarise(n = n()) %>%
+    mutate(Percent = n/sum(n) * 100),
+  filter = 'top'
+)
+```
+
+```{r frac-Origin3, fig.width=12, fig.height=12}
+Origins3 = intersect(levels(seurat$Origin3), unique(seurat$Origin3))
+sapply(Origins3, PlotFrac, seurat_obj = seurat, plot_what = "Origin3", groupby = "cellType", color_maps = cell_color_maps, simplify = F) %>%
+  wrap_plots() +
+  plot_layout(ncol = 3, guides = 'collect')
+```
+
+### Origin3 of LN_N
+
+```{r cell-num-Origin3-by-cluster-LN_N}
+DT::datatable(
+  seurat@meta.data %>%
+    filter(Metastasis_n == "N") %>%
+    group_by(Origin3, cellType) %>%
+    summarise(n = n()) %>%
+    mutate(Percent = n/sum(n) * 100),
+  filter = 'top'
+)
+```
+
+```{r frac-Origin3-LN_N, fig.width=10, fig.height=4, cache=FALSE}
+srat_subset = subset(seurat, subset = Metastasis_n == "N")
+Origins3 = intersect(levels(srat_subset$Origin3), unique(srat_subset$Origin3))
+sapply(Origins3, PlotFrac, seurat_obj = srat_subset, plot_what = "Origin3", groupby = "cellType", color_maps = cell_color_maps, simplify = F) %>%
+  wrap_plots() +
+  plot_layout(ncol = 3, guides = 'collect')
+```
+
+### Origin3 of LN_P
+
+```{r cell-num-Origin3-by-cluster-LN_P}
+DT::datatable(
+  seurat@meta.data %>%
+    filter(Metastasis_n == "P") %>%
+    group_by(Origin3, cellType) %>%
+    summarise(n = n()) %>%
+    mutate(Percent = n/sum(n) * 100),
+  filter = 'top'
+)
+```
+
+```{r frac-Origin3-LN_P, fig.width=10, fig.height=4, cache=FALSE}
+srat_subset = subset(seurat, subset = Metastasis_n == "P")
+Origins3 = intersect(levels(srat_subset$Origin3), unique(srat_subset$Origin3))
+sapply(Origins3, PlotFrac, seurat_obj = srat_subset, plot_what = "Origin3", groupby = "cellType", color_maps = cell_color_maps, simplify = F) %>%
+  wrap_plots() +
+  plot_layout(ncol = 3, guides = 'collect')
+```
+
+### Origin
+
+```{r cell-num-Origin-by-cluster}
+DT::datatable(
+  seurat@meta.data %>%
+    group_by(Origin, cellType) %>%
+    summarise(n = n()) %>%
+    mutate(Percent = n/sum(n) * 100),
+  filter = 'top'
+)
+```
+
+```{r frac-Origin, fig.width=12, fig.height=20}
+Origins = intersect(levels(seurat$Origin), unique(seurat$Origin))
+sapply(Origins, PlotFrac, seurat_obj = seurat, plot_what = "Origin", groupby = "cellType", color_maps = cell_color_maps, simplify = F) %>%
+  wrap_plots() +
+  plot_layout(ncol = 3, guides = 'collect')
+```
+
+### Patient
+
+```{r cell-num-Patient-by-cluster}
+DT::datatable(
+  seurat@meta.data %>%
+    group_by(Patient, cellType) %>%
+    summarise(n = n()) %>%
+    mutate(Percent = n/sum(n) * 100),
+  filter = 'top'
+)
+```
+
+```{r frac-patient, fig.width=12, fig.height=8}
+Patients = c("S0730", "S0819", "S0920", "S0619", "S1125", "S1204")
+sapply(Patients, PlotFrac, seurat_obj = seurat, plot_what = "Patient", groupby = "cellType", color_maps = cell_color_maps, simplify = F) %>%
+  wrap_plots() +
+  plot_layout(ncol = 3, guides = 'collect')
+```
+
+### Source
+
+```{r cell-num-Source-by-cluster}
+DT::datatable(
+  seurat@meta.data %>%
+    group_by(Source, cellType) %>%
+    summarise(n = n()) %>%
+    mutate(Percent = n/sum(n) * 100),
+  filter = 'top'
+)
+```
+
+```{r frac-source, fig.height=18, fig.width=12}
+sapply(Patients, PlotFracSource, seurat_obj = seurat, groupby = "cellType", color_maps = cell_color_maps, simplify = F) %>%
+  wrap_plots(ncol = 2) +
+  plot_layout(guides = 'collect')
+```
+
+## cellType by ... {.tabset}
+
+```{r cell-num-source, fig.height=6, fig.width=7.5}
+p_tissue = seurat@meta.data %>% 
+  group_by(cellType, Tissue) %>% 
+  summarise(n = n()) %>% 
+  mutate(Percent = n/sum(n) * 100) %>%
+  ggplot(aes(x = cellType, y = Percent, fill = Tissue)) + 
+  geom_bar(stat = 'identity', color = 'white') +
+  labs(x = NULL, fill = NULL) +
+  scale_fill_manual(values = tissue_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+p_origin = seurat@meta.data %>% 
+  group_by(cellType, Origin) %>% 
+  summarise(n = n()) %>% 
+  mutate(Percent = n/sum(n) * 100) %>%
+  ggplot(aes(x = cellType, y = Percent, fill = Origin)) + 
+  geom_bar(stat = 'identity', color = 'white') +
+  labs(x = NULL, fill = NULL) +
+  scale_fill_manual(values = origin_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+p_origin2 = seurat@meta.data %>% 
+  group_by(cellType, Origin2_n) %>% 
+  summarise(n = n()) %>% 
+  mutate(Percent = n/sum(n) * 100) %>%
+  ggplot(aes(x = cellType, y = Percent, fill = Origin2_n)) + 
+  geom_bar(stat = 'identity', color = 'white') +
+  labs(x = NULL, fill = NULL) +
+  scale_fill_manual(values = origin2_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+p_origin3 = seurat@meta.data %>% 
+  group_by(cellType, Origin3) %>% 
+  summarise(n = n()) %>% 
+  mutate(Percent = n/sum(n) * 100) %>%
+  ggplot(aes(x = cellType, y = Percent, fill = Origin3)) + 
+  geom_bar(stat = 'identity', color = 'white') +
+  labs(x = NULL, fill = NULL) +
+  scale_fill_manual(values = origin3_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+p_patient = seurat@meta.data %>% 
+  group_by(cellType, Patient) %>% 
+  summarise(n = n()) %>% 
+  mutate(Percent = n/sum(n) * 100) %>%
+  ggplot(aes(x = cellType, y = Percent, fill = Patient)) + 
+  geom_bar(stat = 'identity', color = 'white') +
+  labs(x = NULL, fill = NULL) +
+  scale_fill_manual(values = patient_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+p1 = p_origin2 + p_patient + plot_layout(nrow = 1)
+p2 = p_tissue + p_origin3 + plot_layout(nrow = 1)
+p1/p2
+```
+
+### Tissue
+
+```{r cell-num-source-tissue}
+DT::datatable(
+  seurat@meta.data %>%
+    group_by(cellType, Tissue) %>%
+    summarise(n = n()) %>%
+    mutate(Percent = n/sum(n) * 100),
+  filter = 'top'
+)
+```
+
+### Origin2_n
+
+```{r cell-num-source-Origin2_n}
+DT::datatable(
+  seurat@meta.data %>%
+    group_by(seurat_clusters, Origin2_n) %>%
+    summarise(n = n()) %>%
+    mutate(Percent = n/sum(n) * 100),
+  filter = 'top'
+)
+```
+
+### Origin3
+
+```{r cell-num-source-origin3}
+DT::datatable(
+  seurat@meta.data %>%
+    group_by(seurat_clusters, Origin3) %>%
+    summarise(n = n()) %>%
+    mutate(Percent = n/sum(n) * 100),
+  filter = 'top'
+)
+```
+
+### Patient
+
+```{r cell-num-source-patient}
+DT::datatable(
+  seurat@meta.data %>%
+    group_by(seurat_clusters, Patient) %>%
+    summarise(n = n()) %>%
+    mutate(Percent = n/sum(n) * 100),
+  filter = 'top'
+)
+```
+
+### Origin
+
+```{r cell-num-source-origin}
+DT::datatable(
+  seurat@meta.data %>%
+    group_by(seurat_clusters, Origin) %>%
+    summarise(n = n()) %>%
+    mutate(Percent = n/sum(n) * 100),
+  filter = 'top'
+)
+```
+
+### Source
+
+```{r cell-num-source-source}
+DT::datatable(
+  seurat@meta.data %>%
+    group_by(seurat_clusters, Source) %>%
+    summarise(n = n()) %>%
+    mutate(Percent = n/sum(n) * 100),
+  filter = 'top'
+)
+```
+
+## N3-N5 {.tabset}
+
+肿瘤组织内异质性
+
+```{r n3-n5, fig.height=5, fig.width=7}
+# overall
+p1 = seurat@meta.data %>%
+  filter(Tissue == 'Tumor') %>%
+  group_by(Origin, cellType) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  ggplot(aes(x = Origin, y = Percent, fill = cellType)) +
+  geom_col() +
+  labs(x = NULL, fill = NULL) +
+  scale_fill_manual(values = cell_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+p2 = seurat@meta.data %>%
+  filter(Tissue == 'Tumor') %>%
+  group_by(Patient, Origin, cellType) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  ggplot(aes(x = Origin, y = Percent, fill = cellType)) +
+  geom_col() +
+  labs(x = NULL, fill = NULL) +
+  scale_fill_manual(values = cell_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  facet_wrap(.~Patient) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+p1 + p2 +
+  plot_layout(guides = "collect", widths = c(1, 3))
+```
+
+## LN Metastasis {.tabset}
+
+比较同一个解剖位置转移和非转移淋巴结之间的差别
+
+### Overall
+
+```{r LN-Metastasis, fig.width=4, fig.height=3}
+# overall
+p1 = seurat@meta.data %>%
+  filter(Tissue == 'LN') %>%
+  group_by(Metastasis_n, cellType) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  ggplot(aes(x = cellType, y = Percent, fill = Metastasis_n)) +
+  geom_bar(stat="identity", position="dodge", width=0.8) +
+  labs(x = NULL, fill = NULL) +
+  scale_fill_manual(values = metastasis_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+p1
+```
+
+### by Origin
+
+可以比较的样本如下
+
+```{r LN-Metastasis-from-same-Origin}
+seurat@misc$sam_info %>%
+  filter(Tissue == 'LN') %>%
+  # 贲门左1 和左2 都命名为贲门
+  mutate(Origin = case_when(
+    Origin %in% c("LN-LP1", "LN-LP2") ~ "LN-LP",
+    TRUE ~ as.character(Origin)
+  )) %>%
+  # keep those with LN_N/LN_P
+  filter(Origin %in% c("LN-LP", "LN-ITP", "LN-LG", "LN-LTP", "LN-RR")) %>%
+  group_by(Origin, Metastasis_n) %>%
+  summarise(n = n())
+```
+
+占比
+
+```{r LN-Metastasis-from-same-Origin-prop}
+dat = seurat@meta.data %>%
+  filter(Tissue == 'LN') %>%
+  # 贲门左1 和左2 都命名为贲门
+  mutate(Origin = case_when(
+    Origin %in% c("LN-LP1", "LN-LP2") ~ "LN-LP",
+    TRUE ~ as.character(Origin)
+  )) %>%
+  # keep those with LN_N/LN_P
+  filter(Origin %in% c("LN-LP", "LN-ITP", "LN-LG", "LN-LTP", "LN-RR")) %>%
+  group_by(Origin, Metastasis_n, cellType) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100)
+DT::datatable(dat,
+              filter = "top")
+```
+
+展示
+
+```{r LN-Metastasis-from-same-Origin-p, fig.width=8, fig.height=4}
+p2 = dat %>%  
+  ggplot(aes(x = cellType, y = Percent, fill = Metastasis_n)) +
+  #geom_col() +
+  geom_bar(stat="identity", position="dodge", width=0.8) +
+  labs(x = NULL, fill = NULL) +
+  scale_fill_manual(values = metastasis_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  facet_grid(.~Origin) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+p2
+```
+
+### by Patient
+
+如果按照病人再细分，只有 S0619 的 LN-LP1 和 LN-LP2，以及 S1125 的 LN-RR 和 LN-LR 可以比较
+
+```{r LN-Metastasis-from-same-Origin-by-Patient}
+data.frame(
+  Source = c("S0619.LN4", "S0619.LN5", "S1125.LN1", "S1125.LN6"),
+  Patient = c("S0619", "S0619", "S1125", "S1125"),
+  Tissue = c("LN", "LN", "LN", "LN"),
+  Origin = c("LN-LP1", "LN-LP2", "LN-RR", "LN-LR"),
+  Metastasis = c("N", "P", "N", "P"),
+  Note = c("贲门左1", "贲门左2", "右喉返", "左喉返")
+) %>%
+  knitr::kable() %>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover", "responsive"))
+```
+
+```{r LN-Metastasis-from-same-Origin-by-Patient-p, fig.width=4, fig.height=4}
+# S0619
+p1 = seurat@meta.data %>%
+  filter(Source %in% c('S0619.LN4', 'S0619.LN5')) %>%
+  group_by(Origin, cellType) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  ggplot(aes(x = Origin, y = Percent, fill = cellType)) +
+  geom_col() +
+  scale_fill_manual(values = cell_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  labs(x = NULL, fill = NULL, title = 'S0619') +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+# S1125
+p2 = seurat@meta.data %>%
+  filter(Source %in% c('S1125.LN1', 'S1125.LN6')) %>%
+  group_by(Origin, cellType) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  ggplot(aes(x = Origin, y = Percent, fill = cellType)) +
+  geom_col() +
+  scale_fill_manual(values = cell_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  labs(x = NULL, fill = NULL, title = 'S1125') +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+p1 + p2 +
+  plot_layout(guides = "collect")
+```
+
+## Patient Metastasis
+
+患者间异质性
+
+组织之间比较
+
+```{r metastatic-and-non-metastatic-tissue, fig.height=5, fig.width=7.5}
+patient_info = tibble(Patient = c("S0619", "S0730", "S0819", "S0920", "S1125", "S1204"),
+                      Metastatic = c('P', 'N', 'N', 'N', 'P', 'P'))
+
+seurat@meta.data %>%
+  left_join(patient_info, by = 'Patient') %>%
+  filter(Origin2_n != "LN_P") %>%
+  group_by(Origin2_n, Metastatic, cellType) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  ggplot(aes(x = cellType, y = Percent, fill = Metastatic)) +
+  #geom_col() +
+  geom_bar(stat="identity", position="dodge", width=0.8) +
+  scale_fill_manual(values = metastasis_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  labs(x = NULL, fill = NULL) +
+  facet_wrap(.~Origin2_n) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+## LN Drainage {.tabset}
+
+### by Metastasis
+
+下面这些样本可以用来比较
+
+```{r LN-drainage-by-Metastasis, fig.height=3, fig.width=7.5}
+seurat@misc$sam_info %>%
+  filter(Tissue == 'LN') %>%
+  group_by(Metastasis_n, Drainage) %>%
+  summarise(n = n())
+```
+
+Plot
+
+```{r LN-drainage-by-Metastasis-p, fig.height=3, fig.width=6}
+seurat@meta.data %>%
+  filter(Tissue == 'LN') %>%
+  group_by(Metastasis_n, Drainage, cellType) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  ggplot(aes(x = cellType, y = Percent, fill = Drainage)) +
+  #geom_col() +
+  geom_bar(stat="identity", position="dodge", width=0.8) +
+  scale_fill_manual(values = drainage_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  labs(x = NULL, fill = NULL) +
+  facet_wrap(.~Metastasis_n) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+### by Patient
+
+分病人，再分转移和非转移
+
+```{r LN-drainage-by-Metastasis-by-patient, fig.height=3, fig.width=7.5}
+seurat@misc$sam_info %>%
+  filter(Tissue == 'LN') %>%
+    filter(Patient %in% c("S0619", "S1125", "S1204")) %>%
+  group_by(Patient, Metastasis_n, Drainage) %>%
+  summarise(n = n())
+```
+
+plot
+
+```{r LN-drainage-by-patient, fig.height=6, fig.width=8}
+seurat@meta.data %>%
+  filter(Tissue == 'LN') %>%
+  group_by(Patient, Drainage, Metastasis_n, cellType) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  ggplot(aes(x = Drainage, y = Percent, fill = cellType)) +
+  geom_col() +
+  scale_fill_manual(values = cell_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  #geom_text_repel(aes(label = paste0(round(Percent, 1), "%")),
+  #                  position = position_stack(vjust = 0.5)) +
+  labs(x = NULL, fill = NULL) +
+  facet_grid(Metastasis_n~Patient) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+
+## HC/Correlation {.tabset}
+
+### Cell type
+
+```{r hc-cellType-cor, cache=FALSE, fig.height=5, fig.width=5}
+# Get average expression of variable features across cell types
+Idents(seurat) <- 'cellType'
+var_ave_byCell = AverageExpression(seurat, assays = "RNA", features = VariableFeatures(seurat), slot = "data")
+
+var_ave_byCell.cor = cor(var_ave_byCell$RNA)
+ggcorrplot(round(var_ave_byCell.cor, 2), hc.order = TRUE,
+           type = "upper", lab = TRUE, ggtheme = cowplot::theme_cowplot)
+```
+
+```{r hc-cellType-heat, fig.width=3, fig.height=4, cache=FALSE}
+pheatmap(var_ave_byCell$RNA, scale = "row", show_rownames = F, 
+         color = colorRampPalette(c("blue", "white", "red"))(50),
+         treeheight_row = 1, treeheight_col = 10)
+```
+
+### Origin2_n
+
+```{r hc-Origin2_n-cor, cache=FALSE, fig.height=5, fig.width=5}
+# Get average expression of variable features across Origin2_n
+# change identity to orig.ident
+Idents(seurat) <- "Origin2_n"
+
+# get average expression across original ident
+var_ave_byOrigin2 = AverageExpression(seurat, assays = "RNA", features = VariableFeatures(seurat), slot = "data")
+
+# restore cell identity
+Idents(seurat) <- "cellType"
+
+var_ave_byOrigin2.cor = cor(var_ave_byOrigin2$RNA)
+ggcorrplot(round(var_ave_byOrigin2.cor, 2), hc.order=TRUE, type = "upper", lab = TRUE,
+           ggtheme = cowplot::theme_cowplot)
+```
+
+```{r hc-Origin2_n-heat, fig.width=3, fig.height=4, cache=FALSE}
+pheatmap(var_ave_byOrigin2$RNA, scale = "row", show_rownames = F,
+         color = colorRampPalette(c("blue", "white", "red"))(50),
+         treeheight_row = 1, treeheight_col = 10)
+```
+
+### Tissue
+
+```{r hc-tissue-cor, cache=FALSE, fig.height=4, fig.width=4}
+# Get average expression of variable features across tissue
+# change identity to orig.ident
+Idents(seurat) <- "Tissue"
+
+# get average expression across original ident
+var_ave_byTissue = AverageExpression(seurat, assays = "RNA", features = VariableFeatures(seurat), slot = "data")
+
+# restore cell identity
+Idents(seurat) <- "cellType"
+
+var_ave_byTissue.cor = cor(var_ave_byTissue$RNA)
+ggcorrplot(round(var_ave_byTissue.cor, 2), hc.order=TRUE, type = "upper", lab = TRUE,
+           ggtheme = cowplot::theme_cowplot)
+```
+
+```{r hc-tissue-heat, fig.width=3, fig.height=4, cache=FALSE}
+pheatmap(var_ave_byTissue$RNA, scale = "row", show_rownames = F,
+         color = colorRampPalette(c("blue", "white", "red"))(50),
+         treeheight_row = 1, treeheight_col = 10)
+```
+
+### Origin
+
+```{r hc-Origin-cor, cache=FALSE, fig.width=8, fig.height=8}
+# Get average expression of variable features across tissue
+# change identity to orig.ident
+Idents(seurat) <- "Origin"
+
+# get average expression across original ident
+var_ave_byOrigin = AverageExpression(seurat, assays = "RNA", features = VariableFeatures(seurat), slot = "data")
+
+# restore cell identity
+Idents(seurat) <- "cellType"
+
+var_ave_byOrigin.cor = cor(var_ave_byOrigin$RNA)
+ggcorrplot(round(var_ave_byOrigin.cor, 2), hc.order=TRUE, type = "upper", lab = TRUE,
+           ggtheme = cowplot::theme_cowplot)
+```
+
+```{r hc-Origin-heat, fig.height=4, fig.width=4, cache=FALSE}
+pheatmap(var_ave_byOrigin$RNA, scale = "row", show_rownames = F,
+         color = colorRampPalette(c("blue", "white", "red"))(50),
+         treeheight_row = 1, treeheight_col = 10)
+```
+
+### Source
+
+```{r hc-source-cor, fig.height=8, fig.width=8, cache=FALSE}
+# change identity to orig.ident
+Idents(seurat) <- "Source"
+
+# get average expression across original ident
+var_ave_bySource = AverageExpression(seurat, assays = "RNA", features = VariableFeatures(seurat), slot = "data")
+
+# restore cell identity
+Idents(seurat) <- "cellType"
+
+var_ave_bySource.cor = cor(var_ave_bySource$RNA)
+
+# pheatmap
+gg_color_hue <- function(n) {
+  hues = seq(15, 375, length=n+1)
+  grDevices::hcl(h=hues, l=65, c=100)[1:n]
+}
+# column annotation
+col_ann = seurat@misc$sam_info %>%
+  dplyr::select(Source, Patient, Tissue, Origin) %>%
+  column_to_rownames(var = 'Source')
+# color
+ann_col = list()
+for (col in colnames(col_ann)) {
+  if (!is.factor(col_ann[,col])) col_ann[,col] <- factor(col_ann[,col])
+  num <- length(levels(col_ann[,col]))
+  colors <- 
+    if (num <= 9) {
+      RColorBrewer::brewer.pal(num, "Set1")
+    } else {
+      gg_color_hue(num)
+    }
+  ann_col[[col]] <- stats::setNames(colors, levels(col_ann[,col]))
+}
+
+pheatmap(var_ave_bySource.cor, scale = "none", display_numbers = F,
+         color = colorRampPalette(c("blue", "white", "red"))(50), 
+         show_rownames = F, show_colnames = F,
+         annotation_col = col_ann, annotation_colors = ann_col,
+         treeheight_row = 1, treeheight_col = 10)
+```
+
+```{r hc-source-heat, fig.height=8, fig.width=8, cache=FALSE}
+pheatmap(var_ave_bySource$RNA, scale = "row", 
+         show_rownames = F, show_colnames = F,
+         annotation_col = col_ann, annotation_colors = ann_col, 
+         color = colorRampPalette(c("blue", "white", "red"))(50),
+         treeheight_col = 10, treeheight_row = 1)
+```
+
+## Figures
+
+### Main
+
+UMAP
+
+```{r main-umap, fig.width=7.5, fig.height=2.4, cache=FALSE}
+p.umap = p.umap.cellType +
+  p.umap.vdj +
+  p.umap.Origin2_n +
+  #p.umap.Patient +
+  plot_layout(nrow = 1)
+p.umap
+#ggsave2(p.umap, filename = here::here("output", DOCNAME, 'fig.main.umap.pdf'),
+#       width = 8, height = 2.4, device = cairo_pdf)
+ggsave2(p.umap, filename = here::here("output", DOCNAME, 'fig.main.umap.png'),
+       width = 7.5, height = 2.4, type = "cairo")
+```
+
+Markers
+
+```{r main-markers, fig.width=7.5, fig.height=1.3, cache=FALSE}
+p.marker.main
+ggsave2(p.marker.main, filename = here::here("output", DOCNAME, 'fig.main.markers.pdf'),
+       width = 7.5, height = 1.5, device = cairo_pdf)
+```
+
+Sample composition
+
+```{r main-composition, fig.width=7.5, fig.height=3, cache=FALSE}
+p.cell_by_origin2
+```
+
+### Supp.
+
+More markers
+
+```{r supp-markers, fig.width=7.5, fig.height=5, cache=FALSE}
+p.marker.supp
+ggsave2(p.marker.supp, filename = here::here("output", DOCNAME, 'fig.supp.markers.pdf'),
+        height = 5, width = 7.5, device = cairo_pdf)
+```
+
+Quality
+
+```{r supp-quality, fig.width=7.5, fig.height=5, cache=FALSE}
+p.quality
+ggsave2(p.quality, filename = here::here("output", DOCNAME, 'fig.supp.quality.pdf'),
+        height = 5, width = 7.5, device = cairo_pdf)
+```
+
+Composition
+
+```{r supp-cluster-quality, fig.width=7.5, fig.height=2.5, cache=FALSE}
+p.composition
+ggsave2(p.composition, filename = here::here("output", DOCNAME, 'fig.supp.composition.pdf'),
+        height = 2.5, width = 7.5, device = cairo_pdf)
+```
+
+## Summary
+
+- We got 7 cell types
+

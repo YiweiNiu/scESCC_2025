@@ -1,0 +1,279 @@
+---
+title: "04.sub_cluster.endothelia"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r knitr, include = FALSE}
+DOCNAME = "04.sub_cluster.endothelia"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+    if (before) {
+        print(paste("Start:", Sys.time()))
+        NOW <<- Sys.time()
+    } else {
+        print(paste("Stop:", Sys.time()))
+        print(Sys.time() - NOW)
+    }
+})
+
+knitr::opts_chunk$set(
+    autodep        = TRUE,
+    cache          = TRUE,
+    cache.path     = paste0("cache/", DOCNAME, "/"),
+    cache.lazy     = FALSE, 
+    cache.comments = FALSE,
+    echo           = TRUE,
+    error          = FALSE,
+    fig.align      = "center",
+    fig.width      = 10,
+    fig.height     = 8,
+    message        = FALSE,
+    warning        = FALSE,
+    timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(cowplot)
+library(pheatmap)
+library(ggpubr)
+library(ggcorrplot)
+theme_set(theme_cowplot())
+library(ggsci)
+library(viridis)
+
+# Seurat
+library(Seurat)
+
+# clustree
+library(clustree)
+```
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/plot.R"))
+```
+
+Load rds
+
+```{r load-rds, cache=FALSE}
+seurat = readRDS(here::here('output/04.rm_cells/seurat_endothelia.rds'))
+seurat
+```
+
+## sub-clustering
+
+```{r sub-cluster, eval=FALSE}
+# not run, slow
+seurat = get_cluster(seurat)
+seurat = seurat$seurat_obj
+```
+
+## Dimensionlity reduction {.tabset}
+
+### UMAP {.tabset}
+
+```{r umap-res, results = "hide"}
+resolutions = seq(0, 2, 0.2)
+src_list <- lapply(resolutions, function(res) {
+    src <- c(
+        "#### Res {{res}} {.unnumbered}",
+        "```{r res-umap-{{res}}, fig.width=8, fig.height=8}",
+        "DimPlot(seurat, reduction = 'umap', group.by = 'RNA_snn_res.{{res}}', label = TRUE, pt.size = 0.5)",
+        "```",
+        ""
+    )
+    knitr::knit_expand(text = src)
+})
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+### tSNE {.tabset}
+
+```{r tsne-res, results = "hide"}
+resolutions = seq(0, 2, 0.2)
+src_list <- lapply(resolutions, function(res) {
+    src <- c(
+        "#### Res {{res}} {.unnumbered}",
+        "```{r res-tsne-{{res}}, fig.width=8, fig.height=8}",
+        "DimPlot(seurat, reduction = 'tsne', group.by = 'RNA_snn_res.{{res}}', label = TRUE, pt.size = 0.5)",
+        "```",
+        ""
+    )
+    knitr::knit_expand(text = src)
+})
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+## Expression of lineage markers {.tabset}
+
+```{r markers-dot, results = "hide"}
+resolutions = seq(0, 2, 0.2)
+src_list <- lapply(resolutions, function(res) {
+    src <- c(
+        "### Res {{res}} {.unnumbered}",
+        "```{r res-markers-dot-{{res}}, fig.width=10, fig.height=10}",
+        "DotPlot(seurat, features = rev(unlist(markers.to.plot)), dot.scale = 4, group.by = 'RNA_snn_res.{{res}}') + RotatedAxis() + theme(axis.text.x = element_text(size = rel(0.7)), axis.text.y = element_text(size = rel(0.9)), panel.grid = element_line(color = 'grey'), legend.position = 'bottom', legend.box = 'vertical')",
+        "```",
+        ""
+    )
+    knitr::knit_expand(text = src)
+})
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+
+## Classification markers {.tabset}
+
+```{r classify-endo, fig.width=8, fig.height=6}
+FeaturePlot(seurat, features = c("FLT1", "PDPN", "PROX1"), ncol = 2)
+```
+
+## EndMT
+
+```{r EndMT-dot, fig.height=8, fig.width=10}
+EndMT.markers = c('SMN1', 'SNAI1', 'SNAI2', 'TWIST1', 'NFATC1', 'MMP2', 'COL16A1', 'COL3A1', 'TGFB1', 'TGFB2', 'TGFB3', 'CDH5', 'PTPRC')
+DotPlot(seurat, features = rev(unlist(EndMT.markers)), dot.scale = 4, group.by = 'seurat_clusters') + RotatedAxis() + theme(axis.text.x = element_text(size = rel(0.7)), axis.text.y = element_text(size = rel(0.9)), panel.grid = element_line(color = 'grey'), legend.position = 'bottom', legend.box = 'vertical')
+```
+
+```{r EndMT-scatter, fig.height=14, fig.width=12}
+FeaturePlot(seurat, features = EndMT.markers, ncol = 3)
+```
+
+## Cluster compositions
+
+Cluster compositions and cell number
+
+```{r cluster-check, fig.height=12, fig.width=12, cache=FALSE}
+res <- 2
+Idents(seurat) <- paste0("RNA_snn_res.", res)
+seurat$seurat_clusters <- Idents(seurat)
+cluster_stack(seurat)
+```
+
+## Percent of VDJ
+
+```{r percent-vdj, fig.width=8, fig.height=10}
+percent_vdj(seurat)
+```
+
+## Specific cell number of each cluster {.tabset}
+
+### Tissue
+
+```{r cell-num-source-tissue}
+DT::datatable(
+  seurat@meta.data %>%
+    group_by(seurat_clusters, Tissue) %>%
+    summarise(n = n()),
+  filter = 'top'
+)
+```
+
+### Patient
+
+```{r cell-num-source-patient}
+DT::datatable(
+  seurat@meta.data %>%
+    group_by(seurat_clusters, Patient) %>%
+    summarise(n = n()),
+  filter = 'top'
+)
+```
+
+### Origin
+
+```{r cell-num-source-origin}
+DT::datatable(
+  seurat@meta.data %>%
+    group_by(seurat_clusters, Origin) %>%
+    summarise(n = n()),
+  filter = 'top'
+)
+```
+
+### Source
+
+```{r cell-num-source-source}
+DT::datatable(
+  seurat@meta.data %>%
+    group_by(seurat_clusters, Source) %>%
+    summarise(n = n()),
+  filter = 'top'
+)
+```
+
+## Clustering trees {.tabset}
+
+Clustering trees show the relationship between clusterings at adjacent resolutions. Each cluster is represented as a node in a graph and the edges show the overlap between clusters.
+
+### Standard
+
+Coloured by clustering resolution.
+
+```{r clustree, fig.height=12, fig.width=12}
+clustree(seurat, prefix = 'RNA_snn_res.')
+```
+
+### Stability
+
+Coloured by the SC3 stability metric.
+
+```{r clustree-stability, fig.height=12, fig.width=12}
+clustree(seurat, node_colour = "sc3_stability")
+```
+
+### Genes {.tabset}
+
+Coloured by the expression of known marker genes.
+
+```{r known-genes}
+known_genes <- c(
+    # endothelia
+    "CLDN5", "CDH5", "RAMP2", "VWF",
+    # blood
+    "FLT1",
+    # lymphatic
+    "PDPN", "PROX1"
+)
+is_present <- known_genes %in% rownames(seurat)
+```
+
+> The following genes aren't present in this dataset and will be skipped:
+> `r known_genes[!is_present]`
+
+```{r clustree-genes, results = "hide"}
+src_list <- lapply(known_genes[is_present], function(gene) {
+    src <- c("#### {{gene}} {.unnumbered}",
+             "```{r clustree-{{gene}}, fig.height=12, fig.width=12}",
+             "clustree(seurat, node_colour = '{{gene}}',",
+                      "node_colour_aggr = 'mean', exprs = 'data') +",
+             "scale_colour_viridis_c(option = 'plasma', begin = 0.3)",
+             "```",
+             "")
+    knitr::knit_expand(text = src)
+})
+out <- knitr::knit_child(text = unlist(src_list), options = list(cache = FALSE))
+```
+
+`r out`
+

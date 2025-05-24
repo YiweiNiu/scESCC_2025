@@ -1,0 +1,295 @@
+---
+title: "00.Fig.SOX4.fib"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "00.Fig.SOX4.fib"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = FALSE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+
+# patch
+library(patchwork)
+library(cowplot)
+my_theme <- theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+)
+geom.text.size <- 6 / (14 / 5)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+
+# color
+library(ggsci)
+
+# Seurat
+library(Seurat)
+library(msigdbr)
+```
+
+Load code
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+Load rds
+
+```{r load-rds, cache=FALSE}
+srat <- readRDS(here::here("output/04.rm_cells/seurat_fibroblasts.rds"))
+Idents(srat) <- "level_3"
+srat
+```
+
+## SOX4 in subtypes
+
+```{r fig.width=3, fig.height=2}
+VlnPlot(srat, features = "SOX4", pt.size = 0) +
+  scale_fill_manual(values = fib_level_3_color) +
+  labs(x = NULL, y = "Exp.") +
+  my_theme +
+  NoLegend() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.fib_level3_SOX4.pdf"),
+  height = 2, width = 3, device = cairo_pdf
+)
+```
+
+with dots
+
+```{r fig.width=3, fig.height=2}
+VlnPlot(srat, features = "SOX4", pt.size = 0.001) +
+  scale_fill_manual(values = fib_level_3_color) +
+  labs(x = NULL, y = "Exp.") +
+  my_theme +
+  NoLegend() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.fib_level3_SOX4_withDot.pdf"),
+  height = 2, width = 3, device = cairo_pdf
+)
+```
+
+
+
+## SOX4 in diff. Origin2_n
+
+成纤维细胞(分iCAF/myCAF)SOX4在不同位置的表达情况 origin 2的表达情况 提琴图
+
+```{r fig.width=2, fig.height=3}
+p1 <- VlnPlot(subset(srat, subset = level_2 == "iCAF"),
+              features = "SOX4", group.by = "Origin2_n", pt.size = 0) +
+  scale_fill_manual(values = origin2_color_maps) +
+  labs(x = NULL, y = "Exp.", title = "iCAF") +
+  my_theme +
+  NoLegend() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+p2 <- VlnPlot(subset(srat, subset = level_2 == "myCAF"),
+              features = "SOX4", group.by = "Origin2_n", pt.size = 0) +
+  scale_fill_manual(values = origin2_color_maps) +
+  labs(x = NULL, y = "Exp.", title = "myCAF") +
+  my_theme +
+  NoLegend() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+p1/p2
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.fib_Origin2_SOX4.pdf"),
+  height = 4, width = 2, device = cairo_pdf
+)
+```
+
+with dots
+
+
+```{r fig.width=2, fig.height=3}
+p1 <- VlnPlot(subset(srat, subset = level_2 == "iCAF"),
+              features = "SOX4", group.by = "Origin2_n", pt.size = 0.001) +
+  scale_fill_manual(values = origin2_color_maps) +
+  labs(x = NULL, y = "Exp.", title = "iCAF") +
+  my_theme +
+  NoLegend() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+p2 <- VlnPlot(subset(srat, subset = level_2 == "myCAF"),
+              features = "SOX4", group.by = "Origin2_n", pt.size = 0.001) +
+  scale_fill_manual(values = origin2_color_maps) +
+  labs(x = NULL, y = "Exp.", title = "myCAF") +
+  my_theme +
+  NoLegend() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+p1/p2
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.fib_Origin2_SOX4_withDot.pdf"),
+  height = 4, width = 2, device = cairo_pdf
+)
+```
+
+
+## Cor. with selected signatures
+
+myCAF
+
+```{r fig.width=4, fig.height=3}
+srat_sub <- subset(srat, subset = level_2 %in% c("myCAF"))
+
+# get hallmarks
+genesets = msigdbr(species = "human", category = "H")
+
+gs_lst <- list(
+  # HALLMARK_ANGIOGENESIS
+  H_angiogenesis = filter_features(srat_sub, genesets %>% filter(gs_name == "HALLMARK_ANGIOGENESIS") %>% pull(human_gene_symbol)),
+  # HALLMARK_EPITHELIAL_MESENCHYMAL_TRANSITION
+  H_emt = filter_features(srat_sub, genesets %>% filter(gs_name == "HALLMARK_EPITHELIAL_MESENCHYMAL_TRANSITION") %>% pull(human_gene_symbol)),
+  # HALLMARK_TGF_BETA_SIGNALING
+  H_tgfb = filter_features(srat_sub, genesets %>% filter(gs_name == "HALLMARK_TGF_BETA_SIGNALING") %>% pull(human_gene_symbol)),
+  # HALLMARK_WNT_BETA_CATENIN_SIGNALING
+  H_tgfb = filter_features(srat_sub, genesets %>% filter(gs_name == "HALLMARK_WNT_BETA_CATENIN_SIGNALING") %>% pull(human_gene_symbol)),
+  # HALLMARK_HYPOXIA
+  H_hypoxia = filter_features(srat_sub, genesets %>% filter(gs_name == "HALLMARK_HYPOXIA") %>% pull(human_gene_symbol)),
+  # GOBP_REGULATION_OF_EXTRACELLULAR_MATRIX_ASSEMBLY
+  GO_ecm_assembly = filter_features(srat_sub, GOfuncR::get_anno_genes("GO:1901201") %>% pull(gene)),
+  # GOBP_REGULATION_OF_EXTRACELLULAR_MATRIX_DISASSEMBLY
+  GO_ecm_disassembly = filter_features(srat_sub, GOfuncR::get_anno_genes("GO:0010715") %>% pull(gene)),
+  # GOBP_REGULATION_OF_EXTRACELLULAR_MATRIX_ORGANIZATION
+  GO_ecm_organization = filter_features(srat_sub, GOfuncR::get_anno_genes("GO:1903053") %>% pull(gene)),
+  # GOBP_COLLAGEN_BIOSYNTHETIC_PROCESS
+  GO_col_biosynthetic = filter_features(srat_sub, GOfuncR::get_anno_genes("GO:0032964") %>% pull(gene)),
+  # Pro-tumor proliferation and invasion secretory phenotype
+  pro_tumor = filter_features(srat_sub, c("HGF", "CCN2", "EGF", "IGF1", "IL6", "TGFB1")),
+  # Immunosuppression secretory phenotype
+  immunosuppression = filter_features(srat_sub, c("CCL2", "CCL5", "CXCL9", "CXCL10", "CXCL12", "TGFB1", "IL6", "CSF2", "IL4"))
+)
+
+# get score
+srat_sub <- AddModuleScore(srat_sub, features = gs_lst)
+gs_score <- srat_sub@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  dplyr::select(barcode, starts_with("Cluster")) %>% 
+  column_to_rownames("barcode")
+colnames(gs_score) <- names(gs_lst)
+x <- FetchData(srat_sub, slot = "data", vars = "SOX4")
+
+# plot
+y <- cor(x$SOX4, gs_score)
+d4p <- as.data.frame(t(y)) %>% 
+  rownames_to_column("x") %>%
+  dplyr::rename(y = V1)
+
+d4p %>% 
+  ggplot(aes(x = reorder(x, -y), y = y)) +
+  geom_point(size = 3) +
+  geom_segment(aes(x=x, 
+                   xend=x, 
+                   y=0, 
+                   yend=y)) +
+  labs(x = NULL, y = "cor") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle=65, hjust=1))
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.fib_myCAF_SOX4_gs_cor.pdf"),
+  height = 3, width = 4, device = cairo_pdf
+)
+```
+
+iCAF
+
+```{r fig.width=4, fig.height=3}
+srat_sub <- subset(srat, subset = level_2 %in% c("iCAF"))
+
+# get score
+srat_sub <- AddModuleScore(srat_sub, features = gs_lst)
+gs_score <- srat_sub@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  dplyr::select(barcode, starts_with("Cluster")) %>% 
+  column_to_rownames("barcode")
+colnames(gs_score) <- names(gs_lst)
+x <- FetchData(srat_sub, slot = "data", vars = "SOX4")
+
+# plot
+y <- cor(x$SOX4, gs_score)
+d4p <- as.data.frame(t(y)) %>% 
+  rownames_to_column("x") %>%
+  dplyr::rename(y = V1)
+
+d4p %>% 
+  ggplot(aes(x = reorder(x, -y), y = y)) +
+  geom_point(size = 3) +
+  geom_segment(aes(x=x, 
+                   xend=x, 
+                   y=0, 
+                   yend=y)) +
+  labs(x = NULL, y = "cor") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle=65, hjust=1))
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.fib_iCAF_SOX4_gs_cor.pdf"),
+  height = 3, width = 4, device = cairo_pdf
+)
+```
+
+
+
+## Session info

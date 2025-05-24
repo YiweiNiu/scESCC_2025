@@ -1,0 +1,343 @@
+---
+title: "00.miloR"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "00.miloR"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = FALSE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+library(ggbeeswarm)
+
+# patch
+library(patchwork)
+library(cowplot)
+theme_set(theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6, # title
+  font_family = "Arial"
+))
+my_theme <- theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6, # title
+  font_family = "Arial"
+)
+geom.text.size <- 6 / (14 / 5)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+library(circlize)
+
+# color
+library(ggsci)
+```
+
+Load code
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+Load data
+
+```{r}
+da_results <- readRDS("/work/home/project/scESCA/miloR_241215/miloR/milo_res_byOrigin2_n.rds")
+head(da_results)
+```
+
+## Diagnostics
+
+Diagnostics
+
+```{r , fig.width=12, fig.height=5}
+alpha_level <- .1
+
+# P-value histogram
+p1 <- ggplot(da_results, aes(PValue)) +
+  geom_histogram(bins=50) +
+  scale_y_continuous(expand = c(0, 0)) +
+  labs(x = "Uncorrected P-value")
+# extent of multiple-testing correction
+p2 <- ggplot(da_results, aes(x = PValue, y = SpatialFDR)) +
+  geom_point_rast() +
+  geom_hline(yintercept = alpha_level, linetype = 'dashed') + ## Mark significance threshold
+  geom_abline(linetype = 'dashed') +
+  labs(x = "Uncorrected P-value")
+
+p1 + p2 +
+  plot_layout(ncol = 2)
+```
+
+
+volcano
+
+```{r fig.width=12, fig.height=5}
+# postPBMC vs. prePBMC
+p1 <- ggplot(da_results, aes(x = logFC.TissuepostPBMC...TissueprePBMC, y = -log10(SpatialFDR))) + 
+  geom_point_rast() +
+  geom_hline(yintercept = -log10(alpha_level), linetype = 'dashed') + ## Mark significance threshold (10% FDR)
+  labs(title = "postPBMC vs. prePBMC")
+# pLN vs. nLN
+p2 <- ggplot(da_results, aes(x = logFC.TissuepLN...TissuenLN, y = -log10(SpatialFDR))) + 
+  geom_point_rast() +
+  geom_hline(yintercept = -log10(alpha_level), linetype = 'dashed') + ## Mark significance threshold (10% FDR)
+  labs(title = "pLN vs. nLN")
+p1 + p2
+```
+
+
+
+## Mixed nhoods
+
+Whether DA is particularly evident in certain cell types.
+
+```{r fig.width=5, fig.height=4}
+ggplot(da_results, aes(cellType3_fraction)) + geom_histogram(bins=50)
+```
+
+Mixed nhoods
+
+```{r}
+da_results$celltype <- ifelse(da_results$cellType3_fraction < 0.7, "Mixed", as.character(da_results$cellType3))
+```
+
+```{r}
+table(da_results$celltype)
+```
+
+## Plot {.tabset}
+
+### postPBMC vs. prePBMC
+
+```{r fig.width=6, fig.height=30}
+alpha_level <- .1
+set.seed(12345)
+
+d4p <- da_results %>% 
+  mutate(logFC = logFC.TissuepostPBMC...TissueprePBMC) %>% 
+  filter(celltype != "Mixed") %>%
+  group_by(celltype) %>%
+  mutate(m_logFC = median(logFC)) %>%
+  ungroup() %>%
+  arrange(-m_logFC) %>%  
+  mutate(celltype=factor(celltype, levels=unique(celltype))) %>% 
+  mutate(is_signif = ifelse(SpatialFDR < alpha_level, 1, 0)) %>% 
+  mutate(logFC_color = ifelse(is_signif==1, logFC, NA))
+
+p1 <- d4p %>%
+  ggplot(aes(x = celltype, y = logFC, color=logFC_color)) +
+  geom_quasirandom(size=0.8) +
+  geom_point(data= . %>% distinct(celltype, m_logFC), aes(x=celltype, y=m_logFC), color="black")  +
+  scale_color_gradient2() +
+  coord_flip() +
+  guides(color="none", fill="none") +
+  geom_hline(yintercept=0, linetype=2) +
+  xlab("") + ylab("Log Fold Change in time") +
+  theme_bw(base_size=14)
+p1
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "miloR_DAbeeswarm.postPBMC_vs_prePBMC.pdf"),
+  width = 6, height = 30
+)
+```
+
+
+### pLN vs. nLN
+
+```{r fig.width=6, fig.height=30}
+alpha_level <- .1
+set.seed(12345)
+
+d4p <- da_results %>% 
+  mutate(logFC = logFC.TissuepLN...TissuenLN) %>% 
+  filter(celltype != "Mixed") %>%
+  group_by(celltype) %>%
+  mutate(m_logFC = median(logFC)) %>%
+  ungroup() %>%
+  arrange(-m_logFC) %>%  
+  mutate(celltype=factor(celltype, levels=unique(celltype))) %>% 
+  mutate(is_signif = ifelse(SpatialFDR < alpha_level, 1, 0)) %>% 
+  mutate(logFC_color = ifelse(is_signif==1, logFC, NA))
+
+p1 <- d4p %>%
+  ggplot(aes(x = celltype, y = logFC, color=logFC_color)) +
+  geom_quasirandom(size=0.8) +
+  geom_point(data= . %>% distinct(celltype, m_logFC), aes(x=celltype, y=m_logFC), color="black")  +
+  scale_color_gradient2() +
+  coord_flip() +
+  guides(color="none", fill="none") +
+  geom_hline(yintercept=0, linetype=2) +
+  xlab("") + ylab("Log Fold Change in time") +
+  theme_bw(base_size=14)
+p1
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "miloR_DAbeeswarm.pLN_vs_nLN.pdf"),
+  width = 6, height = 30
+)
+```
+
+
+### Adjacent vs. Normal
+
+```{r fig.width=6, fig.height=30}
+alpha_level <- .1
+set.seed(12345)
+
+d4p <- da_results %>% 
+  mutate(logFC = logFC.TissueAdjacent...TissueNormal) %>% 
+  filter(celltype != "Mixed") %>%
+  group_by(celltype) %>%
+  mutate(m_logFC = median(logFC)) %>%
+  ungroup() %>%
+  arrange(-m_logFC) %>%  
+  mutate(celltype=factor(celltype, levels=unique(celltype))) %>% 
+  mutate(is_signif = ifelse(SpatialFDR < alpha_level, 1, 0)) %>% 
+  mutate(logFC_color = ifelse(is_signif==1, logFC, NA))
+
+p1 <- d4p %>%
+  ggplot(aes(x = celltype, y = logFC, color=logFC_color)) +
+  geom_quasirandom(size=0.8) +
+  geom_point(data= . %>% distinct(celltype, m_logFC), aes(x=celltype, y=m_logFC), color="black")  +
+  scale_color_gradient2() +
+  coord_flip() +
+  guides(color="none", fill="none") +
+  geom_hline(yintercept=0, linetype=2) +
+  xlab("") + ylab("Log Fold Change in time") +
+  theme_bw(base_size=14)
+p1
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "miloR_DAbeeswarm.Adjacent_vs_Normal.pdf"),
+  width = 6, height = 30
+)
+```
+
+
+### Tumor vs. Adjacent
+
+```{r fig.width=6, fig.height=30}
+alpha_level <- .1
+set.seed(12345)
+
+d4p <- da_results %>% 
+  mutate(logFC = logFC.TissueTumor...TissueAdjacent) %>% 
+  filter(celltype != "Mixed") %>%
+  group_by(celltype) %>%
+  mutate(m_logFC = median(logFC)) %>%
+  ungroup() %>%
+  arrange(-m_logFC) %>%  
+  mutate(celltype=factor(celltype, levels=unique(celltype))) %>% 
+  mutate(is_signif = ifelse(SpatialFDR < alpha_level, 1, 0)) %>% 
+  mutate(logFC_color = ifelse(is_signif==1, logFC, NA))
+
+p1 <- d4p %>%
+  ggplot(aes(x = celltype, y = logFC, color=logFC_color)) +
+  geom_quasirandom(size=0.8) +
+  geom_point(data= . %>% distinct(celltype, m_logFC), aes(x=celltype, y=m_logFC), color="black")  +
+  scale_color_gradient2() +
+  coord_flip() +
+  guides(color="none", fill="none") +
+  geom_hline(yintercept=0, linetype=2) +
+  xlab("") + ylab("Log Fold Change in time") +
+  theme_bw(base_size=14)
+p1
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "miloR_DAbeeswarm.Tumor_vs_Adjacent.pdf"),
+  width = 6, height = 30
+)
+```
+
+
+### Tumor vs. Normal
+
+```{r fig.width=6, fig.height=30}
+alpha_level <- .1
+set.seed(12345)
+
+d4p <- da_results %>% 
+  mutate(logFC = logFC.TissueTumor...TissueNormal) %>% 
+  filter(celltype != "Mixed") %>%
+  group_by(celltype) %>%
+  mutate(m_logFC = median(logFC)) %>%
+  ungroup() %>%
+  arrange(-m_logFC) %>%  
+  mutate(celltype=factor(celltype, levels=unique(celltype))) %>% 
+  mutate(is_signif = ifelse(SpatialFDR < alpha_level, 1, 0)) %>% 
+  mutate(logFC_color = ifelse(is_signif==1, logFC, NA))
+
+p1 <- d4p %>%
+  ggplot(aes(x = celltype, y = logFC, color=logFC_color)) +
+  geom_quasirandom(size=0.8) +
+  geom_point(data= . %>% distinct(celltype, m_logFC), aes(x=celltype, y=m_logFC), color="black")  +
+  scale_color_gradient2() +
+  coord_flip() +
+  guides(color="none", fill="none") +
+  geom_hline(yintercept=0, linetype=2) +
+  xlab("") + ylab("Log Fold Change in time") +
+  theme_bw(base_size=14)
+p1
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "miloR_DAbeeswarm.Tumor_vs_Normal.pdf"),
+  width = 6, height = 30
+)
+```
+
+
+## Session info
+

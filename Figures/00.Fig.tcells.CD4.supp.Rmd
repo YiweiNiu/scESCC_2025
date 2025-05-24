@@ -1,0 +1,248 @@
+---
+title: "00.Fig.tcells.CD4.supp"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "00.Fig.tcells.CD4.supp"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = FALSE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+#library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+
+# patch
+library(patchwork)
+library(cowplot)
+theme_set(theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+))
+my_theme <- theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+)
+geom.text.size <- 6 / (14 / 5)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+
+# color
+library(ggsci)
+
+# pvclust
+library(pvclust)
+library(dendextend)
+
+# Seurat
+library(Seurat)
+
+# monocle
+library(monocle)
+
+# CytoTRACE
+library(CytoTRACE)
+```
+
+Load code
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+Load rds
+
+```{r load-rds, cache=FALSE}
+srat <- readRDS(here::here("output/04.rm_cells/seurat_cd4.rds"))
+Idents(srat) <- "level_3"
+srat
+```
+
+Load cell meta
+
+```{r load-cell-meta, cache=FALSE, message=FALSE, warning=FALSE}
+cell_meta <- read_csv(here::here("output/04.rm_cells/seurat_cd4.cellmeta.csv")) %>%
+  dplyr::select(barcode, seurat_clusters, level_2, level_3)
+head(cell_meta)
+```
+
+Cell annotations
+
+```{r anno, cache=FALSE}
+df.c2c <- readRDS(here::here("data", "c2c.t.rds"))
+head(df.c2c)
+```
+
+## UMAP {.tabset}
+
+### Level 3
+
+```{r fig.width=3, fig.height=2.5, cache=FALSE}
+p.umap.celltype <- DimPlot(srat, reduction = "umap", group.by = "level_3", raster = TRUE) +
+  scale_color_manual(values = t_level_3_color) +
+  labs(title = NULL) +
+  my_theme +
+  # guides(color = guide_legend(ncol = 4, byrow = TRUE)) +
+  theme(
+    legend.margin = margin(rep(0, 4), unit = "cm"),
+    legend.spacing.y = unit(0, "cm"),
+    legend.key.height = unit(.4, "cm"),
+    legend.box.margin = margin(rep(-.2, 4), unit = "cm"),
+    legend.position = "right"
+  )
+p.umap.celltype
+
+# saveRDS(p.umap.level_3, file = here::here("output", DOCNAME, "Fig.umap.cellType.rds"))
+ggsave2(p.umap.celltype,
+  filename = here::here("output", DOCNAME, "Fig.umap.cellType.pdf"),
+  height = 2.5, width = 3, device = cairo_pdf
+)
+```
+
+With label
+
+```{r fig.width=1.8, fig.height=1.9, cache=FALSE}
+p.umap.celltype.label <- DimPlot(srat,
+  reduction = "umap", group.by = "level_3",
+  label = TRUE, label.size = geom.text.size,
+  raster = TRUE
+) +
+  scale_color_manual(values = t_level_3_color) +
+  labs(title = NULL) +
+  my_theme +
+  theme(legend.position = "none")
+p.umap.celltype.label
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.umap.cellType.labelled.pdf"),
+  height = 1.9, width = 1.8, device = cairo_pdf
+)
+```
+
+## Composition plot
+
+### cellType compositions
+
+```{r cellType-compositions, fig.width=6, fig.height=3}
+cluster_byOrigin4 = srat@meta.data %>%
+  group_by(level_3, Origin4) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100)
+cluster_byPatient = srat@meta.data %>%
+  group_by(level_3, Patient) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100)
+cluster_cellNum = srat@meta.data %>%
+  group_by(level_3) %>%
+  summarise(n = n())
+
+p1 = ggplot(cluster_byOrigin4, aes(x = level_3, y = Percent, fill = Origin4)) +
+  geom_bar(stat = "identity", color = 'white') +
+  scale_fill_manual(values = origin4_color_maps) +
+  labs(fill = NULL, x = NULL) +
+  coord_flip() +
+  guides(fill = guide_legend(ncol=1, byrow=TRUE)) +
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_x_discrete(limits=rev) +
+  guides(fill = guide_legend(nrow=2, byrow=TRUE)) +
+  my_theme +
+  theme(legend.position = "top")
+p2 = ggplot(cluster_byPatient, aes(x = level_3, y = Percent, fill = Patient)) +
+  geom_bar(stat = "identity", color = 'white') +
+  scale_fill_manual(values = patient_color_maps) +
+  labs(fill = NULL, x = NULL) +
+  coord_flip() +
+  guides(fill = guide_legend(ncol=1, byrow=TRUE)) +
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_x_discrete(limits=rev) +
+  guides(fill = guide_legend(nrow=2, byrow=TRUE)) +
+  my_theme +
+  theme(legend.position = "top")
+p3 = ggplot(cluster_cellNum, aes(x = level_3, y = log2(n), fill = 'blue')) +
+  geom_bar(stat = "identity", color = '#00008f') +
+  scale_fill_manual(values = '#8f8fb1') +
+  labs(fill = NULL, x = NULL) +
+  coord_flip() +
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_x_discrete(limits=rev) +
+  guides(fill = guide_legend(nrow=2, byrow=TRUE)) +
+  my_theme +
+  theme(legend.position = "top")
+
+p.cellType.comp = p1 + p2 + p3 +
+  plot_layout(ncol = 3)
+p.cellType.comp
+
+ggsave2(p.cellType.comp,
+  filename = here::here("output", DOCNAME, "Fig.cellTypeComposition.pdf"),
+  height = 3.5, width = 6, device=cairo_pdf
+)
+```
+
+### Sample composition
+
+Source
+
+```{r sample-compositions, fig.width=8.2, fig.height=3}
+p <- PlotSampleFraction(seurat_obj = srat, "level_3", t_level_3_color)
+p
+
+#saveRDS(p, file = here::here("output", DOCNAME, "Fig.sampleComposition.rds"))
+ggsave2(p,
+  filename = here::here("output", DOCNAME, "Fig.sampleComposition.pdf"),
+  height = 3, width = 8.2, device=cairo_pdf
+)
+```
+
+## Session info
+
+

@@ -1,0 +1,680 @@
+---
+title: "00.Fig.fibroblasts.supp"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "Fig.fibroblasts.supp"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = TRUE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+
+# patch
+library(patchwork)
+library(cowplot)
+my_theme <- theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+)
+geom.text.size <- 6 / (14 / 5)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+
+# color
+library(ggsci)
+
+# Seurat
+library(Seurat)
+```
+
+Load code
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+Load rds
+
+```{r load-rds, cache=FALSE}
+srat <- readRDS(here::here("output/04.rm_cells/seurat_fibroblasts.rds"))
+Idents(srat) <- "level_3"
+srat
+```
+
+
+## Top 50 DEGs
+
+Plot top 50 DEGs of each subtype
+
+```{r plot-top-markers, message=FALSE, warning=FALSE, fig.height=3.5, fig.width=2.8}
+# get markers
+markers <- read_tsv(here::here("output/04.rm_cells/seurat_fibroblasts.markers.txt"))
+# top 50
+top50 <- markers %>%
+  group_by(cluster) %>%
+  top_n(50, wt = avg_logFC)
+
+# rename
+top50 <- top50 %>%
+  left_join(df_c2c, by = "cluster")
+# de-duplicate
+top50 <- top50[!duplicated(top50$gene), ]
+
+# to list
+top50_lst <- lapply(levels(top50$level_3), function(x) {
+  top50 %>%
+    filter(level_3 == x) %>%
+    pull(gene)
+})
+names(top50_lst) <- levels(top50$level_3)
+
+# get exp
+mat <- AverageExpression(srat,
+  assays = "RNA", features = unlist(top50_lst),
+  slot = "data", verbose = F
+)$RNA
+mat <- log1p(as.matrix(mat))
+
+# scale
+mat_scale <- pheatmap:::scale_rows(mat)
+
+# color
+x <- ceiling(max(abs(mat_scale)))
+col_fun <- circlize::colorRamp2(c(-x, 0, x), c("blue", "white", "red"))
+
+# marker
+marker_2_lab <- c( # NMF
+  "CFD", "CLU", "IGFBP6",
+  "MT1A",
+  # myCAF
+  "POSTN", "F2R",
+  "MMP1", "COL10A1",
+  "CST1",
+  # iCAF
+  "C7", "IGF1",
+  "ARC", "SFRP4", "CXCL14",
+  # VSMC
+  "MYH11", "DES", "CNN1",
+  # pericyte
+  "RGS5", "MCAM",
+  "GJA4", "BCAM", "ADGRF5",
+  # apCAF
+  "CD74", "CDH19"
+)
+# location
+marker_2_lab <- sapply(marker_2_lab, function(x) {
+  which(rownames(mat) == x)
+}, simplify = T)
+ha <- rowAnnotation(foo = anno_mark(
+  at = marker_2_lab,
+  labels = names(marker_2_lab),
+  labels_gp = gpar(fontsize = 6)
+))
+
+ht <- Heatmap(mat_scale,
+  name = "Exp.",
+  col = col_fun,
+  right_annotation = ha,
+  cluster_columns = F,
+  cluster_rows = F,
+  show_row_names = FALSE,
+  column_names_gp = gpar(fontsize = 6),
+  # column_names_rot = 60,
+  heatmap_legend_param = list( # direction = "horizontal",
+    labels_gp = gpar(fontsize = 6),
+    title_gp = gpar(fontsize = 6),
+    # title_position = "leftcenter",
+    grid_height = unit(2, "mm"),
+    grid_width = unit(2, "mm")
+  )
+)
+# draw(ht, heatmap_legend_side = "bottom")
+p.markers.top50 <- plot_grid(grid.grabExpr(draw(ht, heatmap_legend_side = "right")))
+p.markers.top50
+
+# save
+saveRDS(p.markers.top50, file = here::here("output", DOCNAME, "Fig.markers.top50.rds"))
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.markers.top50.pdf"),
+  height = 3.5, width = 2.8, device = cairo_pdf
+)
+```
+
+
+## Composition
+
+### Frac. changes by Origin4
+
+```{r overall-fraction-change-Origin4, fig.width=2, fig.height=2.5, cache=FALSE}
+tb.fc <- readRDS(here::here("output", "freq.frac_change.fib", "tb.fc.rds"))
+
+p.fractionChange <- PlotFracChange(tb.fc, x = "Origin4") +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+p.fractionChange
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.frac_change.byOrigin4.pdf"),
+  height = 2.5, width = 2, device = cairo_pdf
+)
+```
+
+### Origin4 enrichment
+
+```{r fig.width=1.8, fig.height=2.5, warning=FALSE}
+cluster_cellNum <- metadata %>%
+  group_by(cellType3) %>%
+  summarise(cluster.cell_num = n()) %>%
+  mutate(cluster.cell_num = as.numeric(cluster.cell_num))
+
+origin2_CellNum <- sam_info %>%
+  group_by(Origin4) %>%
+  summarise(origin.cell_num = sum(cell.filtered)) %>%
+  mutate(origin.cell_num = as.numeric(origin.cell_num)) %>%
+  mutate(total = sum(origin.cell_num)) %>%
+  mutate(total = as.numeric(total))
+
+cluster_byOrigin2 <- metadata %>%
+  group_by(cellType3, Origin4) %>%
+  summarise(o = n()) %>%
+  mutate(o = as.numeric(o))
+
+# add origins not existing
+tmp <- setdiff(unique(metadata$Origin4), cluster_byOrigin2$Origin4)
+if (length(tmp) > 0) {
+  for (t in tmp) {
+    x <- tibble(cellType3 = unique(cluster_cellNum$cellType3), Origin4 = t, o = 0)
+    cluster_byOrigin2 <- bind_rows(cluster_byOrigin2, x)
+  }
+}
+
+r_oe <- cluster_byOrigin2 %>%
+  left_join(origin2_CellNum, by = "Origin4") %>%
+  left_join(cluster_cellNum, by = "cellType3") %>%
+  mutate(e = (origin.cell_num * cluster.cell_num) / total) %>%
+  mutate(r = o / e) %>%
+  dplyr::select(cellType3, Origin4, r) %>%
+  spread(Origin4, r, fill = 0) %>%
+  column_to_rownames("cellType3")
+
+# order
+tmp.df <- r_oe %>%
+  rownames_to_column("cellType3") %>%
+  arrange(nLN, m_nLN, m_pLN, Normal, Adjacent, Tumor)
+
+# data for plot
+r_oe[r_oe > 10] <- 10
+d4p <- r_oe %>%
+  rownames_to_column("cellType3") %>%
+  pivot_longer(cols = !cellType3, names_to = "Origin4") %>%
+  mutate(
+    Origin4 = factor(Origin4, levels = c(
+      "prePBMC", "postPBMC",
+      "nLN", "m_nLN", "m_pLN",
+      "Normal", "Adjacent",
+      "Tumor"
+    )),
+    cellType3 = factor(cellType3, levels = tmp.df$cellType3)
+  )
+
+# % lineage prop
+df.lineage_prop <- metadata %>%
+  group_by(cellType3, Origin4) %>%
+  summarise(cellType3.cell_num = n()) %>%
+  mutate(cellType3.cell_num = as.numeric(cellType3.cell_num)) %>%
+  ungroup() %>%
+  mutate(tot = nrow(metadata)) %>%
+  mutate(lineage.prop = cellType3.cell_num * 100 / tot)
+
+# plot
+p.roe.fib <- d4p %>%
+  filter(!str_detect(Origin4, "PBMC")) %>%
+  ggplot(aes(x = Origin4, y = cellType3, fill = value)) +
+  geom_tile() +
+  geom_point(
+    data = df.lineage_prop,
+    aes(x = Origin4, y = cellType3, size = lineage.prop),
+    shape = 1,
+    inherit.aes = FALSE
+  ) +
+  scale_x_discrete(position = "top") +
+  scale_y_discrete(position = "right") +
+  scale_fill_gradient2(
+    midpoint = 1,
+    low = "blue", mid = "white", high = "red",
+    name = expression(R[O / E])
+  ) +
+  scale_size(range = c(1, 3)) +
+  labs(size = "% lineage") +
+  theme_cowplot(font_size = 6) +
+  theme(
+    axis.text.x = element_text(angle = 60, hjust = 0),
+    axis.title = element_blank(),
+    axis.line = element_blank(),
+    axis.ticks = element_blank(),
+    legend.position = "right",
+    text = element_text(size = 6)
+  )
+p.roe.fib
+
+# save
+saveRDS(p.roe.fib, file = here::here("output", DOCNAME, "Fig.Roe.byOrigin4.rds"))
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.Roe.byOrigin4.pdf"),
+  height = 2.5, width = 1.8, device = cairo_pdf
+)
+```
+
+### cellType compos.
+
+```{r fig.width=5, fig.height=2}
+p1 <- srat@meta.data %>%
+  group_by(level_3, Origin4) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n / sum(n) * 100) %>%
+  ggplot(aes(x = level_3, y = Percent, fill = Origin4)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = origin4_color_maps) +
+  labs(fill = NULL) +
+  coord_flip() +
+  guides(fill = guide_legend(ncol = 1, byrow = TRUE)) +
+  scale_y_continuous(expand = c(0, 0)) +
+  my_theme
+p2 <- srat@meta.data %>%
+  group_by(level_3, Patient) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n / sum(n) * 100) %>%
+  ggplot(aes(x = level_3, y = Percent, fill = Patient)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = patient_color_maps) +
+  labs(fill = NULL) +
+  coord_flip() +
+  guides(fill = guide_legend(ncol = 1, byrow = TRUE)) +
+  scale_y_continuous(expand = c(0, 0)) +
+  my_theme +
+  theme(
+    axis.text.y = element_blank(),
+    axis.title.y = element_blank()
+  )
+p3 <- srat@meta.data %>%
+  group_by(level_3) %>%
+  summarise(n = n()) %>%
+  ggplot(aes(x = level_3, y = log2(n), fill = "blue")) +
+  geom_bar(stat = "identity", color = "#00008f") +
+  scale_fill_manual(values = "#8f8fb1") +
+  labs(fill = NULL) +
+  coord_flip() +
+  scale_y_continuous(expand = c(0, 0)) +
+  my_theme +
+  theme(
+    axis.text.y = element_blank(),
+    axis.title.y = element_blank(),
+    legend.position = "none"
+  )
+
+p.stack <- plot_grid(p1, p2, p3, ncol = 3, rel_widths = c(2.1, 1.5, 1))
+p.stack
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.cellTypeComposition.pdf"),
+  height = 2, width = 5, device = cairo_pdf
+)
+```
+
+### N3-N5
+
+肿瘤组织内异质性
+
+```{r n3-n5, fig.height=2, fig.width=2}
+p.cellByN3N4N5 <- srat@meta.data %>%
+  filter(Tissue == "Tumor") %>%
+  group_by(Patient, Origin, level_3) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n / sum(n) * 100) %>%
+  ggplot(aes(x = Origin, y = Percent, fill = level_3)) +
+  geom_col() +
+  labs(x = NULL, fill = NULL) +
+  scale_fill_manual(values = fib_level_3_color) +
+  scale_y_continuous(expand = c(0, 0)) +
+  facet_wrap(. ~ Patient) +
+  my_theme +
+  theme(
+    axis.text.x = element_text(angle = 60, hjust = 1),
+    strip.background = element_rect(fill = "#f3f2f1")
+  )
+p.cellByN3N4N5
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.cellByN3N4N5.pdf"),
+  height = 2, width = 2, device = cairo_pdf
+)
+```
+
+## AUCell/SCENIC
+
+Hallmark
+
+```{r fig.width=3.3, fig.height=3}
+cell_type <- "fibroblasts"
+anno_level <- "level_3"
+
+# load
+de_tf.glm_patient <- read_tsv(here::here("output", "DE_MSigDB_H", paste0(cell_type, ".de_MSigDB_H.glm_patient.tsv")))
+
+# cell types
+d4p <- de_tf.glm_patient %>%
+  left_join(df_c2c, by = "cluster") %>%
+  dplyr::rename(cellType3 = level_3)
+
+# t_mat
+t_mat <- d4p %>%
+  pivot_wider(id_cols = "gene", names_from = "cellType3", values_from = "t") %>%
+  column_to_rownames("gene")
+t_mat <- t_mat[, levels(d4p$cellType3)]
+
+# select rows to show
+selected_row <- d4p %>%
+  filter(p_adj < 0.05) %>% # keep only those with p_adj < 0.05
+  group_by(cluster) %>%
+  top_n(3, wt = t) %>%
+  pull(gene) %>%
+  unique()
+
+p.glm.H <- plot_heatmap_glm(as.matrix(t_mat[selected_row, ]),
+  cluster_columns = FALSE,
+  show_row_dend = FALSE,
+  show_column_dend = FALSE
+)
+p.glm.H
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.DE_Hallmark.pdf"),
+  height = 3, width = 3.3, device = cairo_pdf
+)
+```
+
+TFs
+
+```{r fig.width=2.5, fig.height=4}
+cell_type <- "fibroblasts"
+anno_level <- "level_3"
+
+# load
+de_tf.glm_patient <- read_csv(here::here("output", paste0("DE_TF.", cell_type), "de_tf.glm_patient.csv"))
+
+# cell types
+d4p <- de_tf.glm_patient %>%
+  left_join(df_c2c, by = "cluster") %>%
+  dplyr::rename(cellType3 = level_3)
+
+# t_mat
+t_mat <- d4p %>%
+  pivot_wider(id_cols = "gene", names_from = "cellType3", values_from = "t") %>%
+  column_to_rownames("gene")
+t_mat <- t_mat[, levels(d4p$cellType3)]
+
+# select rows to show
+selected_row <- d4p %>%
+  filter(p_adj < 0.05) %>% # keep only those with p_adj < 0.05
+  group_by(cluster) %>%
+  top_n(3, wt = t) %>%
+  pull(gene) %>%
+  unique()
+
+p.glm.TF <- plot_heatmap_glm(as.matrix(t_mat[selected_row, ]),
+  cluster_columns = FALSE,
+  show_row_dend = FALSE
+)
+p.glm.TF
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.DE_TFs.pdf"),
+  height = 4, width = 2.5, device = cairo_pdf
+)
+```
+
+
+## CytoTRACE
+
+```{r fig.width=2, fig.height=2}
+result <- readRDS(here::here("output", "CytoTRACE.fibroblasts", "CytoTRACE.res.rds"))
+
+p.CytoTRACE <- tibble(
+  barcode = names(result$CytoTRACE),
+  value = result$CytoTRACE
+) %>%
+  left_join(metadata, by = "barcode") %>%
+  ggplot(aes(x = reorder(level_3, -value, median), y = value, fill = level_3)) +
+  geom_boxplot(width = .5, outlier.size = .05) +
+  scale_fill_manual(values = fib_level_3_color) +
+  labs(y = "Predicted order", x = NULL) +
+  my_theme +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 60, hjust = 1)
+  )
+p.CytoTRACE
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.CytoTRACE.pdf"),
+  height = 2, width = 2, device = cairo_pdf
+)
+```
+
+
+## Selected genes
+
+### Cytokines
+
+- List from table 1 of: Turner, M.D., Nedjai, B., Hurst, T., and Pennington, D.J. (2014). Cytokines and chemokines: At the crossroads of cell signalling and inflammatory disease. Biochimica et Biophysica Acta (BBA) - Molecular Cell Research 1843, 2563–2582.
+
+```{r Cytokines, fig.width=3, fig.height=4}
+markers = list(
+  # Adaptive immunity
+  adaptive = filter_features(srat, c('IL2', 'IL4', 'IL7', 'IL15', 'CSF2', 'IL13', 'TSLP')),
+  # Anti-inflammatory signalling
+  antiinflammatory = filter_features(srat, c('IL12A', 'IL23A', 'IL10', 'IL19', 'IL20', 'IL24', 'IL26')),
+  # Pro-inflammatory signalling
+  proinflammatory = filter_features(srat, c('IL1A', 'IL1B', 'IL1RN', 'IL18', 'IL33', 'IL36A', 'IL36G', 'IL6', 'CNTF', 'CTF1', 'LIF', 'SPP1', 'OSM', 'TNF', 'BAFF', 'TNFSF13', 'IFNK', 'IFNG'))
+  )
+
+ht <- customDoHeatmap(srat, markers, z_score = T, idents = "level_3", cluster_columns = FALSE)
+p <- plot_grid(grid.grabExpr(draw(ht, heatmap_legend_side = "right")))
+p
+```
+
+### Cytokines (iCAF)
+
+- List from table 1 of: Turner, M.D., Nedjai, B., Hurst, T., and Pennington, D.J. (2014). Cytokines and chemokines: At the crossroads of cell signalling and inflammatory disease. Biochimica et Biophysica Acta (BBA) - Molecular Cell Research 1843, 2563–2582.
+
+```{r Cytokines-iCAF, fig.width=2, fig.height=4}
+srat_sub <- subset(srat, subset = level_2 == "iCAF")
+
+ht <- customDoHeatmap(srat_sub, markers, z_score = T, idents = "level_3", cluster_columns = FALSE)
+p <- plot_grid(grid.grabExpr(draw(ht, heatmap_legend_side = "right")))
+p
+```
+
+### Chemokine
+
+Markers: chemokine, list from: <https://en.wikipedia.org/wiki/Chemokine>
+
+```{r Chemokine, fig.width=3, fig.height=2.5}
+markers = list(
+  homeostatic = filter_features(srat, c('CCL14', 'CCL19', 'CCL20', 'CCL21', 'CCL27', 'CXCL12', 'CXCL13')),
+  inflammatory = filter_features(srat, c('CXCL8', 'CCL2', 'CCL3', 'CCL4', 'CCL5', 'CCL11', 'CXCL10'))
+  )
+
+ht <- customDoHeatmap(srat, markers, z_score = T, idents = "level_3", cluster_columns = FALSE)
+p <- plot_grid(grid.grabExpr(draw(ht, heatmap_legend_side = "right")))
+p
+```
+
+### MHC-II and costimulatory
+
+- costimulatory from: Elyada, E., Bolisetty, M., Laise, P., Flynn, W.F., Courtois, E.T., Burkhart, R.A., Teinor, J.A., Belleau, P., Biffi, G., Lucito, M.S., et al. (2019). Cross-Species Single-Cell Analysis of Pancreatic Ductal Adenocarcinoma Reveals Antigen-Presenting Cancer-Associated Fibroblasts. Cancer Discov 9, 1102–1123.
+
+- MHC-II from [MHC-I and MHC-II](MHC.exp.fibroblasts.html)
+
+```{r MHC-II-costimulatory, fig.width=2.5, fig.height=2.5}
+srat_sub <- subset(srat, subset = level_1 == "fibroblasts")
+
+markers <- list(
+  MHCII = filter_features(srat_sub, c("HLA-DRA", "HLA-DRB1", "HLA-DPA1", "HLA-DPB1", "HLA-DQA1")),
+  costi. = filter_features(srat_sub, c("KLRK1", "ICOS", "TNFRSF18", "CD27", "TNFRSF9", "CD226", "TNFRSF4", "CD40", "CD80", "CD86"))
+)
+
+ht <- customDoHeatmap(srat_sub, markers, z_score = T, idents = "level_3", cluster_columns = FALSE)
+p <- plot_grid(grid.grabExpr(draw(ht, heatmap_legend_side = "right")))
+p
+```
+
+### Kieffer 2020 {.tabset}
+
+- Paper: Kieffer, Y., Hocine, H.R., Gentric, G., Pelon, F., Bernard, C., Bourachot, B., Lameiras, S., Albergante, L., Bonneau, C., Guyard, A., et al. (2020). Single-cell analysis reveals fibroblast clusters linked to immunotherapy resistance in cancer. Cancer Discov.
+
+- CAF-S1 (FAP+) from breast cancer
+
+```{r Kieffer, fig.height=1.5, fig.width=3, cache=FALSE}
+markers <- list(
+  ecm_myCAF = filter_features(srat, c("ASPN", "COL3A1", "THY1", "SFRP2", "COL10A1", "COL6A3", "LRRC17", "CILP", "GRP", "ITGBL1", "COL8A1", "COL14A1", "ADAM12", "OLFML2B", "ELN", "PLPP4", "CREB3L1", "FBN1", "LOXL1", "MATN3", "LRRC15", "COMP", "ISLR", "P3H1", "COL11A1", "SEPT11", "NBL1", "SPON1", "SULF1", "FNDC1", "CNN1", "MIAT", "MMP23B", "CPXM1", "FIBIN", "P4HA3", "GXYLT2", "CILP2", "P3H4", "CCDC80")),
+  # Pro inflammatory
+  TGFB_myCAF = filter_features(srat, c("CST1", "LAMP5", "LOXL1", "EDNRA", "TGFB1", "TGFB3", "TNN", "CST2", "HES4", "COL10A1", "ELN", "THBS4", "NKD2", "OLFM2", "COL6A3", "LRRC17", "COL3A1", "THY1", "HTRA3", "TMEM204", "SEPT11", "COMP", "TNFAIP6", "ID4", "GGT5", "INAFM1", "CILP", "OLFML2B")),
+  wound_myCAF = filter_features(srat, c("SFRP4", "CCDC80", "OGN", "DCN", "PTGER3", "SFRP2", "PDGFRL", "SMOC2", "MMP23B", "CPXM2", "COL14A1", "ITGBL1", "WISP2", "CILP2", "COL8A1", "GAS1", "COL3A1", "OMD", "COL11A1", "CILP", "NEXN", "ASPN", "RARRES2", "FIBIN", "TMEM119", "KERA", "ID4", "GRP", "COMP", "DPT", "ELN", "FBLN2", "IGF1", "IGF2")),
+  detox_iCAF = filter_features(srat, c("ADH1B", "C7", "CXCL12", "TNXB", "RSPO3", "DCN", "C16orf89", "GDF10", "PAMR1", "FXYD1", "ZBTB16", "SLIT3", "HSPB6", "IL6", "FBLN5", "OGN", "PLA2G2A", "CHRDL1", "CYGB", "FGF7", "PI16", "PLAC9", "WISP2", "PTX3", "CCL2", "CXCL3")),
+  # Anti-inflammatory
+  IL_iCAF = filter_features(srat, c("ITM2A", "CXCL12", "FIGF", "FXYD1", "PLPP3", "TNFRSF10D", "CTB-92J24.3", "LAMC3", "C7", "ZBTB16", "CAPN6", "SCARA5", "DLK1", "MEG3", "TAC1", "THUMPD3-AS1", "GMFG", "CYGB", "CCL8", "VCAM1", "FMO2", "FBLN5", "COLEC12", "PDGFD", "GADD45G", "SNAI1", "LSP1", "CCL2", "IL6", "PTGS2", "NR2F1", "F10", "CEBPA", "KDM6B", "PID1")),
+  IFNG_iCAF = filter_features(srat, c("CCL19", "VCAM1", "RBP5", "CYP1B1", "C7", "TNFRSF4", "CXCL13", "CXCL9", "CCL2", "IL34", "ABI3BP", "CYP7B1", "F10", "COLEC12", "CXCL10", "EMILIN1", "GGT5", "EGFLAM", "PLXDC1", "CXCL11", "CCL8", "CXCL3")),
+  CAF_S1 = filter_features(srat, c("LAMA2", "SFRP4", "PDGFRA", "LRRC15", "GREM1", "SFRP2", "KIAA1462", "DCN", "CPXM2", "PTGFR", "WNT2", "ADAMTSL1", "FBLN5", "DPP4", "P4HA3", "CCDC80", "PRICKLE1", "GALNT12", "ABI3BP", "GALNTL2", "RSPO3", "LOC100288077", "PODN", "CHRDL1", "CILP", "PRDM6", "CCL11", "CAPN6", "PDGFRL", "PTGS2", "SEMA3D", "DPT", "NOX4", "ZFHX4", "EPYC", "DCHS1", "DNM3", "COL6A6", "CPZ", "FLRT2", "NEGR1", "BMPER", "LOC255480", "CXCL12", "HTRA3", "DIO2", "TNNT3", "COL6A3", "KCNK2", "KERA", "COL11A1", "STMN2", "SYNDIG1", "ISLR", "COL10A1", "ADH1B", "OMD", "GAS1", "PTX3", "FLNC", "SPON1", "CST1", "CNTN3", "COMP", "CD177", "MFAP4", "LSP1", "F13A1", "PLA2G2A", "GDF10", "UST", "FHAD1", "OGN", "LIPG", "SORCS2", "FGF7", "ABCA9", "WISP2", "BEND6", "ADH1C", "GRIA3", "FAT4", "FNDC1", "SCARA5", "IGFL2", "KIAA1199", "PI16", "LOC728640", "C3orf55", "AOX1", "CLCN4", "HS3ST3A1", "TMEM176B", "CST2", "FBN1", "GXYLT2", "FGL2", "GABRB2", "COL3A1", "SLC1A7")),
+  Normal_Fibroblast = filter_features(srat, c("ACACB", "ACSM5", "ADAMTS5", "ADRB1", "AGTR1", "AKR1C4", "ANKRD20A4", "ANKRD31", "AQP7", "ARHGAP6", "ASPA", "ATOH8", "ATP1A2", "ATP8B4", "BMP5", "C1QTNF7", "C4orf32", "CA3", "CAB39L", "CADM3", "CCDC69", "CD14", "CD34", "CD36", "CDH6", "CDHR3", "CDHR4", "CHRDL1", "CIDEC", "CLEC3B", "COL21A1", "COX4I2", "CTSG", "CYP21A2", "CYP3A5", "CYP4B1", "CYP4F12", "CYP4X1", "DACT2", "DGAT2", "DGKB", "DNASE1L3", "DPY19L2", "EBF2", "EBF3", "ECM2", "ESAM", "F10", "FAM162B", "FAM180B", "FBLN5", "FHL5", "FNDC5", "FRMPD1", "FZD4", "G0S2", "GDF10", "GHR", "GPD1", "HBA1", "HBA2", "HBB", "HBD", "HIGD1B", "HRCT1", "IL33", "KANK3", "KCNA2", "KCNAB1", "KLF2", "KRT222", "LIFR", "LMO3", "LRAT", "LRP1B", "MLXIPL", "NEGR1", "NOVA1", "NPR1", "NPY1R", "NTN1", "NTN4", "PCOLCE2", "PGM5", "PID1", "PLIN1", "PLIN4", "PPARG", "PPP1R1A", "PRG2", "PXDNL", "REEP1", "RET", "S1PR1", "SCARA5", "SCARF1", "SCN4A", "SCN4B", "SDPR", "SEC14L5", "SEMA6C", "SERINC4", "SGCA", "SH2D1A", "SLC16A12", "SLC19A3", "SLC1A2", "SLC2A4", "SLC7A4", "SLC8A1", "SMOC1", "SPAG17", "SPRR2F", "STEAP4", "TCF7L1", "TEF", "TNMD", "TNNT3", "TNXB", "TPSAB1", "TPSB2", "TRHDE", "VIPR1", "VIT", "VSIG10L", "VWF", "WDR17", "WNT11", "ZDHHC11", "ZNF304", "ZNF839"))
+)
+
+cal_mean <- function(features) {
+  exp <- AverageExpression(srat, assays = "RNA", features = features, slot = "data", verbose = FALSE)
+  apply(as.matrix(log1p(exp$RNA)), 2, mean)
+}
+
+mat <- t(sapply(markers, cal_mean))
+mat <- pheatmap:::scale_rows(mat)
+
+ht <- Heatmap(mat,
+  name = "z-score",
+  cluster_columns = F,
+  show_column_dend = F,
+  show_row_dend = F,
+  row_names_gp = gpar(fontsize = 6),
+  column_names_gp = gpar(fontsize = 6),
+  heatmap_legend_param = list( # direction = "horizontal",
+    labels_gp = gpar(fontsize = 6),
+    title_gp = gpar(fontsize = 6),
+    # title_position = "leftcenter",
+    grid_height = unit(2, "mm"),
+    grid_width = unit(2, "mm")
+  )
+)
+
+p <- plot_grid(grid.grabExpr(draw(ht, heatmap_legend_side = "right")))
+p
+```
+
+
+### ASC & MAF
+
+这篇文章发现胰腺癌中有 ASC 向 MAF 转化的趋势。
+
+- Paper: Zhu, K., Cai, L., Cui, C., and Anastassiou, D. (2020). Single-cell RNA-seq analysis reveals the pan-cancer transformation of adipose-derived stromal cells into COL11A1-expressing metastasis associated fibroblasts. BioRxiv 2020.06.23.166066.
+
+- ASC: adipose-derived stromal cells
+
+- MAF: metastasis-associated fibroblasts
+
+```{r Zhu-ASC-MAF, fig.height=2, fig.width=3, cache=FALSE}
+markers <- list(
+  ASC = c("APOD", "PTGDS", "C7", "CFD", "DPT"),
+  MAF = c("COL11A1", "INHBA", "THBS2", "COL10A1", "MMP11")
+)
+
+ht <- customDoHeatmap(srat, markers, z_score = T, idents = "level_3", cluster_columns = FALSE)
+p <- plot_grid(grid.grabExpr(draw(ht, heatmap_legend_side = "right")))
+p
+```
+
+### Fibroblasts vs. pericyte
+
+```{r FeaturePlot-markers, fig.width=4.5, fig.height=2.5, cache=FALSE}
+p.markers = customFeaturePlot(srat, pt.size = 0.1, features = c(
+  # fibroblasts
+  c("COL1A2", "COL3A1", "LUM", "DCN"),
+  # pericyte
+  c('RGS5', 'PDGFRB', 'MCAM', 'CSPG4')
+)) %>%
+  wrap_plots(nrow = 2, ncol = 4) & theme(plot.margin = margin(0))
+p.markers
+```
+
+### Lipo-CAF
+
+```{r fig.height=4, fig.width=8}
+VlnPlot(srat, features = c("FABP4", "CD36"),
+        pt.size = 0.01, ncol = 2) &
+  theme(axis.text = element_text(size = 8))
+```
+
+## Session info
+

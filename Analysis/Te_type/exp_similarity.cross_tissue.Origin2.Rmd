@@ -1,0 +1,620 @@
+---
+title: "exp_similarity.cross_tissue.Origin2"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME = "exp_similarity.cross_tissue.Origin2"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+    if (before) {
+        print(paste("Start:", Sys.time()))
+        NOW <<- Sys.time()
+    } else {
+        print(paste("Stop:", Sys.time()))
+        print(Sys.time() - NOW)
+    }
+})
+
+knitr::opts_chunk$set(
+    autodep        = TRUE,
+    cache          = FALSE,
+    cache.path     = paste0("cache/", DOCNAME, "/"),
+    cache.lazy     = FALSE, 
+    cache.comments = FALSE,
+    echo           = TRUE,
+    error          = FALSE,
+    fig.align      = "center",
+    fig.width      = 10,
+    fig.height     = 8,
+    message        = FALSE,
+    warning        = FALSE,
+    timeit         = TRUE
+)
+```
+
+根据低维 PC 空间中细胞的临近，来判断不同组织中细胞与其他组织的相似性。
+
+参考下面文章中的 Figure2
+
+* Zhang, Q., He, Y., Luo, N., Patel, S. J., Han, Y., Gao, R., Modak, M., Carotta, S., Haslinger, C., Kind, D., Peet, G. W., Zhong, G., Lu, S., Zhu, W., Mao, Y., Xiao, M., Bergmann, M., Hu, X., Kerkar, S. P., … Zhang, Z. (2019). Landscape and Dynamics of Single Immune Cells in Hepatocellular Carcinoma. Cell, 179(4), 829-845.e20. https://doi.org/10.1016/j.cell.2019.10.003
+
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(ggplotify)
+library(ggcorrplot)
+library(ggpubr)
+
+# patch
+library(patchwork)
+library(cowplot)
+theme_set(theme_cowplot(font_size = 10,
+                        rel_small = 8/10,
+                        rel_tiny = 6/10,
+                        rel_large = 10/10,
+                        font_family = "Arial"))
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+
+# color
+library(ggsci)
+
+# BiocNeighbors
+library(BiocNeighbors)
+
+# Seurat
+library(Seurat)
+```
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+## prePBMC {.tabset}
+
+Load
+
+```{r}
+t = "prePBMC"
+p_mat = readRDS(here::here("output", DOCNAME, paste0(t, ".p_mat.rds")))
+p_mat = p_mat[!str_detect(rownames(p_mat), "Epi_"),]
+tissue_origin = readRDS(here::here("output", DOCNAME, paste0(t, ".tissue_origin.rds")))
+tissue_origin = tissue_origin[!str_detect(tissue_origin$NN_type, "Epi_"),]
+```
+
+### Overall
+
+```{r fig.width=5, fig.height=4}
+# Generate barplot of pecent rate
+plot_sum <- t(as.data.frame(prop.table(table(tissue_origin$NN_tissue))*100))
+plot_sum <- as.data.frame(t(plot_sum))
+colnames(plot_sum) <- c("Tissue", "Percent")
+plot_sum$Percent <- as.numeric(as.character(plot_sum$Percent))
+plot_sum$Tissue <- factor(plot_sum$Tissue, levels = c("prePBMC", "postPBMC", "nLN", "m_nLN", "m_pLN",
+                                                "Normal", "Adjacent", "Tumor"))
+p <- ggplot(data=plot_sum, aes(x=Tissue, y=Percent)) +
+    geom_bar(stat="identity", fill="steelblue") +
+    scale_y_continuous(expand = c(0, 0))
+p
+```
+
+### p_mat
+
+```{r fig.width=4, fig.height=15}
+pheatmap::pheatmap(p_mat, cluster_rows = FALSE, cluster_cols = FALSE,
+                   display_numbers = TRUE,
+                   color=colorRampPalette(c("red", "white", "blue"))(100),
+                   fontsize = 7)
+```
+
+### By cellType3
+
+```{r fig.width=16, fig.height=5}
+d4p = tissue_origin %>%
+  group_by(cellType3, NN_tissue) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100)
+# sort
+tmp_df = d4p %>%
+  filter(NN_tissue == "Tumor") %>%
+  arrange(-Percent)
+d4p$cellType3 = factor(d4p$cellType3, levels = c(tmp_df$cellType3, setdiff(d4p$cellType3, tmp_df$cellType3)))
+
+d4p %>%
+  ggplot(aes(x = cellType3, y = Percent, fill = NN_tissue)) +
+  geom_col() +
+  scale_fill_manual(values = origin4_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+# save
+d4p %>% pivot_wider(id_cols = "cellType3", names_from = "NN_tissue", values_from = "Percent") %>%
+  write_tsv(here::here("output", DOCNAME, paste0(t, ".exp_similarity.cross_tissue.percent.txt")))
+d4p %>% pivot_wider(id_cols = "cellType3", names_from = "NN_tissue", values_from = "n") %>%
+  write_tsv(here::here("output", DOCNAME, paste0(t, ".exp_similarity.cross_tissue.number.txt")))
+```
+
+### Facet by cellType3
+
+```{r fig.width=12, fig.height=20}
+d4p %>%
+  ggplot(aes(x = NN_tissue, y = Percent, fill = NN_tissue)) +
+  geom_col() +
+  scale_fill_manual(values = origin4_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  facet_wrap(.~cellType3) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+## postPBMC {.tabset}
+
+Load
+
+```{r}
+t = "postPBMC"
+p_mat = readRDS(here::here("output", DOCNAME, paste0(t, ".p_mat.rds")))
+p_mat = p_mat[!str_detect(rownames(p_mat), "Epi_"),]
+tissue_origin = readRDS(here::here("output", DOCNAME, paste0(t, ".tissue_origin.rds")))
+tissue_origin = tissue_origin[!str_detect(tissue_origin$NN_type, "Epi_"),]
+```
+
+### Overall
+
+```{r fig.width=5, fig.height=4}
+# Generate barplot of pecent rate
+plot_sum <- t(as.data.frame(prop.table(table(tissue_origin$NN_tissue))*100))
+plot_sum <- as.data.frame(t(plot_sum))
+colnames(plot_sum) <- c("Tissue", "Percent")
+plot_sum$Percent <- as.numeric(as.character(plot_sum$Percent))
+plot_sum$Tissue <- factor(plot_sum$Tissue, levels = c("prePBMC", "postPBMC", "nLN", "m_nLN", "m_pLN",
+                                                "Normal", "Adjacent", "Tumor"))
+p <- ggplot(data=plot_sum, aes(x=Tissue, y=Percent)) +
+    geom_bar(stat="identity", fill="steelblue") +
+    scale_y_continuous(expand = c(0, 0))
+p
+```
+
+### p_mat
+
+```{r fig.width=4, fig.height=15}
+pheatmap::pheatmap(p_mat, cluster_rows = FALSE, cluster_cols = FALSE,
+                   display_numbers = TRUE,
+                   color=colorRampPalette(c("red", "white", "blue"))(100),
+                   fontsize = 7)
+```
+
+### By cellType3
+
+```{r fig.width=16, fig.height=5}
+d4p = tissue_origin %>%
+  group_by(cellType3, NN_tissue) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100)
+# sort
+tmp_df = d4p %>%
+  filter(NN_tissue == "Tumor") %>%
+  arrange(-Percent)
+d4p$cellType3 = factor(d4p$cellType3, levels = c(tmp_df$cellType3, setdiff(d4p$cellType3, tmp_df$cellType3)))
+
+d4p %>%
+  ggplot(aes(x = cellType3, y = Percent, fill = NN_tissue)) +
+  geom_col() +
+  scale_fill_manual(values = origin4_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+# save
+d4p %>% pivot_wider(id_cols = "cellType3", names_from = "NN_tissue", values_from = "Percent") %>%
+  write_tsv(here::here("output", DOCNAME, paste0(t, ".exp_similarity.cross_tissue.percent.txt")))
+d4p %>% pivot_wider(id_cols = "cellType3", names_from = "NN_tissue", values_from = "n") %>%
+  write_tsv(here::here("output", DOCNAME, paste0(t, ".exp_similarity.cross_tissue.number.txt")))
+```
+
+### Facet by cellType3
+
+```{r fig.width=12, fig.height=20}
+d4p %>%
+  ggplot(aes(x = NN_tissue, y = Percent, fill = NN_tissue)) +
+  geom_col() +
+  scale_fill_manual(values = origin4_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  facet_wrap(.~cellType3) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+## nLN {.tabset}
+
+Load
+
+```{r}
+t = "nLN"
+p_mat = readRDS(here::here("output", DOCNAME, paste0(t, ".p_mat.rds")))
+p_mat = p_mat[!str_detect(rownames(p_mat), "Epi_"),]
+tissue_origin = readRDS(here::here("output", DOCNAME, paste0(t, ".tissue_origin.rds")))
+tissue_origin = tissue_origin[!str_detect(tissue_origin$NN_type, "Epi_"),]
+```
+
+### Overall
+
+```{r fig.width=5, fig.height=4}
+# Generate barplot of pecent rate
+plot_sum <- t(as.data.frame(prop.table(table(tissue_origin$NN_tissue))*100))
+plot_sum <- as.data.frame(t(plot_sum))
+colnames(plot_sum) <- c("Tissue", "Percent")
+plot_sum$Percent <- as.numeric(as.character(plot_sum$Percent))
+plot_sum$Tissue <- factor(plot_sum$Tissue, levels = c("prePBMC", "postPBMC", "nLN", "m_nLN", "m_pLN",
+                                                "Normal", "Adjacent", "Tumor"))
+p <- ggplot(data=plot_sum, aes(x=Tissue, y=Percent)) +
+    geom_bar(stat="identity", fill="steelblue") +
+    scale_y_continuous(expand = c(0, 0))
+p
+```
+
+### p_mat
+
+```{r fig.width=4, fig.height=15}
+pheatmap::pheatmap(p_mat, cluster_rows = FALSE, cluster_cols = FALSE,
+                   display_numbers = TRUE,
+                   color=colorRampPalette(c("red", "white", "blue"))(100),
+                   fontsize = 7)
+```
+
+### By cellType3
+
+```{r fig.width=16, fig.height=5}
+d4p = tissue_origin %>%
+  group_by(cellType3, NN_tissue) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100)
+# sort
+tmp_df = d4p %>%
+  filter(NN_tissue == "Tumor") %>%
+  arrange(-Percent)
+d4p$cellType3 = factor(d4p$cellType3, levels = c(tmp_df$cellType3, setdiff(d4p$cellType3, tmp_df$cellType3)))
+
+d4p %>%
+  ggplot(aes(x = cellType3, y = Percent, fill = NN_tissue)) +
+  geom_col() +
+  scale_fill_manual(values = origin4_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+# save
+d4p %>% pivot_wider(id_cols = "cellType3", names_from = "NN_tissue", values_from = "Percent") %>%
+  write_tsv(here::here("output", DOCNAME, paste0(t, ".exp_similarity.cross_tissue.percent.txt")))
+d4p %>% pivot_wider(id_cols = "cellType3", names_from = "NN_tissue", values_from = "n") %>%
+  write_tsv(here::here("output", DOCNAME, paste0(t, ".exp_similarity.cross_tissue.number.txt")))
+```
+
+### Facet by cellType3
+
+```{r fig.width=12, fig.height=20}
+d4p %>%
+  ggplot(aes(x = NN_tissue, y = Percent, fill = NN_tissue)) +
+  geom_col() +
+  scale_fill_manual(values = origin4_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  facet_wrap(.~cellType3) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+
+## pLN {.tabset}
+
+Load
+
+```{r}
+t = "pLN"
+p_mat = readRDS(here::here("output", DOCNAME, paste0(t, ".p_mat.rds")))
+p_mat = p_mat[!str_detect(rownames(p_mat), "Epi_"),]
+tissue_origin = readRDS(here::here("output", DOCNAME, paste0(t, ".tissue_origin.rds")))
+tissue_origin = tissue_origin[!str_detect(tissue_origin$NN_type, "Epi_"),]
+```
+
+### Overall
+
+```{r fig.width=5, fig.height=4}
+# Generate barplot of pecent rate
+plot_sum <- t(as.data.frame(prop.table(table(tissue_origin$NN_tissue))*100))
+plot_sum <- as.data.frame(t(plot_sum))
+colnames(plot_sum) <- c("Tissue", "Percent")
+plot_sum$Percent <- as.numeric(as.character(plot_sum$Percent))
+plot_sum$Tissue <- factor(plot_sum$Tissue, levels = c("prePBMC", "postPBMC", "nLN", "m_nLN", "m_pLN",
+                                                "Normal", "Adjacent", "Tumor"))
+p <- ggplot(data=plot_sum, aes(x=Tissue, y=Percent)) +
+    geom_bar(stat="identity", fill="steelblue") +
+    scale_y_continuous(expand = c(0, 0))
+p
+```
+
+### p_mat
+
+```{r fig.width=4, fig.height=15}
+pheatmap::pheatmap(p_mat, cluster_rows = FALSE, cluster_cols = FALSE,
+                   display_numbers = TRUE,
+                   color=colorRampPalette(c("red", "white", "blue"))(100),
+                   fontsize = 7)
+```
+
+### By cellType3
+
+```{r fig.width=16, fig.height=5}
+d4p = tissue_origin %>%
+  group_by(cellType3, NN_tissue) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100)
+# sort
+tmp_df = d4p %>%
+  filter(NN_tissue == "Tumor") %>%
+  arrange(-Percent)
+d4p$cellType3 = factor(d4p$cellType3, levels = c(tmp_df$cellType3, setdiff(d4p$cellType3, tmp_df$cellType3)))
+
+d4p %>%
+  ggplot(aes(x = cellType3, y = Percent, fill = NN_tissue)) +
+  geom_col() +
+  scale_fill_manual(values = origin4_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+# save
+d4p %>% pivot_wider(id_cols = "cellType3", names_from = "NN_tissue", values_from = "Percent") %>%
+  write_tsv(here::here("output", DOCNAME, paste0(t, ".exp_similarity.cross_tissue.percent.txt")))
+d4p %>% pivot_wider(id_cols = "cellType3", names_from = "NN_tissue", values_from = "n") %>%
+  write_tsv(here::here("output", DOCNAME, paste0(t, ".exp_similarity.cross_tissue.number.txt")))
+```
+
+### Facet by cellType3
+
+```{r fig.width=12, fig.height=20}
+d4p %>%
+  ggplot(aes(x = NN_tissue, y = Percent, fill = NN_tissue)) +
+  geom_col() +
+  scale_fill_manual(values = origin4_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  facet_wrap(.~cellType3) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+## Normal {.tabset}
+
+Load
+
+```{r}
+t = "Normal"
+p_mat = readRDS(here::here("output", DOCNAME, paste0(t, ".p_mat.rds")))
+p_mat = p_mat[!str_detect(rownames(p_mat), "Epi_"),]
+tissue_origin = readRDS(here::here("output", DOCNAME, paste0(t, ".tissue_origin.rds")))
+tissue_origin = tissue_origin[!str_detect(tissue_origin$NN_type, "Epi_"),]
+```
+
+### Overall
+
+```{r fig.width=5, fig.height=4}
+# Generate barplot of pecent rate
+plot_sum <- t(as.data.frame(prop.table(table(tissue_origin$NN_tissue))*100))
+plot_sum <- as.data.frame(t(plot_sum))
+colnames(plot_sum) <- c("Tissue", "Percent")
+plot_sum$Percent <- as.numeric(as.character(plot_sum$Percent))
+plot_sum$Tissue <- factor(plot_sum$Tissue, levels = c("prePBMC", "postPBMC", "nLN", "m_nLN", "m_pLN",
+                                                "Normal", "Adjacent", "Tumor"))
+p <- ggplot(data=plot_sum, aes(x=Tissue, y=Percent)) +
+    geom_bar(stat="identity", fill="steelblue") +
+    scale_y_continuous(expand = c(0, 0))
+p
+```
+
+### p_mat
+
+```{r fig.width=4, fig.height=15}
+pheatmap::pheatmap(p_mat, cluster_rows = FALSE, cluster_cols = FALSE,
+                   display_numbers = TRUE,
+                   color=colorRampPalette(c("red", "white", "blue"))(100),
+                   fontsize = 7)
+```
+
+### By cellType3
+
+```{r fig.width=16, fig.height=5}
+d4p = tissue_origin %>%
+  group_by(cellType3, NN_tissue) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100)
+# sort
+tmp_df = d4p %>%
+  filter(NN_tissue == "Tumor") %>%
+  arrange(-Percent)
+d4p$cellType3 = factor(d4p$cellType3, levels = c(tmp_df$cellType3, setdiff(d4p$cellType3, tmp_df$cellType3)))
+
+d4p %>%
+  ggplot(aes(x = cellType3, y = Percent, fill = NN_tissue)) +
+  geom_col() +
+  scale_fill_manual(values = origin4_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+# save
+d4p %>% pivot_wider(id_cols = "cellType3", names_from = "NN_tissue", values_from = "Percent") %>%
+  write_tsv(here::here("output", DOCNAME, paste0(t, ".exp_similarity.cross_tissue.percent.txt")))
+d4p %>% pivot_wider(id_cols = "cellType3", names_from = "NN_tissue", values_from = "n") %>%
+  write_tsv(here::here("output", DOCNAME, paste0(t, ".exp_similarity.cross_tissue.number.txt")))
+```
+
+### Facet by cellType3
+
+```{r fig.width=12, fig.height=20}
+d4p %>%
+  ggplot(aes(x = NN_tissue, y = Percent, fill = NN_tissue)) +
+  geom_col() +
+  scale_fill_manual(values = origin4_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  facet_wrap(.~cellType3) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+## Adjacent {.tabset}
+
+Load
+
+```{r}
+t = "Adjacent"
+p_mat = readRDS(here::here("output", DOCNAME, paste0(t, ".p_mat.rds")))
+p_mat = p_mat[!str_detect(rownames(p_mat), "Epi_"),]
+tissue_origin = readRDS(here::here("output", DOCNAME, paste0(t, ".tissue_origin.rds")))
+tissue_origin = tissue_origin[!str_detect(tissue_origin$NN_type, "Epi_"),]
+```
+
+### Overall
+
+```{r fig.width=5, fig.height=4}
+# Generate barplot of pecent rate
+plot_sum <- t(as.data.frame(prop.table(table(tissue_origin$NN_tissue))*100))
+plot_sum <- as.data.frame(t(plot_sum))
+colnames(plot_sum) <- c("Tissue", "Percent")
+plot_sum$Percent <- as.numeric(as.character(plot_sum$Percent))
+plot_sum$Tissue <- factor(plot_sum$Tissue, levels = c("prePBMC", "postPBMC", "nLN", "m_nLN", "m_pLN",
+                                                "Normal", "Adjacent", "Tumor"))
+p <- ggplot(data=plot_sum, aes(x=Tissue, y=Percent)) +
+    geom_bar(stat="identity", fill="steelblue") +
+    scale_y_continuous(expand = c(0, 0))
+p
+```
+
+### p_mat
+
+```{r fig.width=4, fig.height=15}
+pheatmap::pheatmap(p_mat, cluster_rows = FALSE, cluster_cols = FALSE,
+                   display_numbers = TRUE,
+                   color=colorRampPalette(c("red", "white", "blue"))(100),
+                   fontsize = 7)
+```
+
+### By cellType3
+
+```{r fig.width=16, fig.height=5}
+d4p = tissue_origin %>%
+  group_by(cellType3, NN_tissue) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100)
+# sort
+tmp_df = d4p %>%
+  filter(NN_tissue == "Tumor") %>%
+  arrange(-Percent)
+d4p$cellType3 = factor(d4p$cellType3, levels = c(tmp_df$cellType3, setdiff(d4p$cellType3, tmp_df$cellType3)))
+
+d4p %>%
+  ggplot(aes(x = cellType3, y = Percent, fill = NN_tissue)) +
+  geom_col() +
+  scale_fill_manual(values = origin4_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+# save
+d4p %>% pivot_wider(id_cols = "cellType3", names_from = "NN_tissue", values_from = "Percent") %>%
+  write_tsv(here::here("output", DOCNAME, paste0(t, ".exp_similarity.cross_tissue.percent.txt")))
+d4p %>% pivot_wider(id_cols = "cellType3", names_from = "NN_tissue", values_from = "n") %>%
+  write_tsv(here::here("output", DOCNAME, paste0(t, ".exp_similarity.cross_tissue.number.txt")))
+```
+
+### Facet by cellType3
+
+```{r fig.width=12, fig.height=20}
+d4p %>%
+  ggplot(aes(x = NN_tissue, y = Percent, fill = NN_tissue)) +
+  geom_col() +
+  scale_fill_manual(values = origin4_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  facet_wrap(.~cellType3) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+## Tumor {.tabset}
+
+Load
+
+```{r}
+t = "Tumor"
+p_mat = readRDS(here::here("output", DOCNAME, paste0(t, ".p_mat.rds")))
+p_mat = p_mat[!str_detect(rownames(p_mat), "Epi_"),]
+tissue_origin = readRDS(here::here("output", DOCNAME, paste0(t, ".tissue_origin.rds")))
+tissue_origin = tissue_origin[!str_detect(tissue_origin$NN_type, "Epi_"),]
+```
+
+### Overall
+
+```{r fig.width=5, fig.height=4}
+# Generate barplot of pecent rate
+plot_sum <- t(as.data.frame(prop.table(table(tissue_origin$NN_tissue))*100))
+plot_sum <- as.data.frame(t(plot_sum))
+colnames(plot_sum) <- c("Tissue", "Percent")
+plot_sum$Percent <- as.numeric(as.character(plot_sum$Percent))
+plot_sum$Tissue <- factor(plot_sum$Tissue, levels = c("prePBMC", "postPBMC", "nLN", "m_nLN", "m_pLN",
+                                                "Normal", "Adjacent", "Tumor"))
+p <- ggplot(data=plot_sum, aes(x=Tissue, y=Percent)) +
+    geom_bar(stat="identity", fill="steelblue") +
+    scale_y_continuous(expand = c(0, 0))
+p
+```
+
+### p_mat
+
+```{r fig.width=4, fig.height=15}
+pheatmap::pheatmap(p_mat, cluster_rows = FALSE, cluster_cols = FALSE,
+                   display_numbers = TRUE,
+                   color=colorRampPalette(c("red", "white", "blue"))(100),
+                   fontsize = 7)
+```
+
+### By cellType3
+
+```{r fig.width=16, fig.height=5}
+d4p = tissue_origin %>%
+  group_by(cellType3, NN_tissue) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100)
+# sort
+tmp_df = d4p %>%
+  filter(NN_tissue == "Tumor") %>%
+  arrange(-Percent)
+d4p$cellType3 = factor(d4p$cellType3, levels = c(tmp_df$cellType3, setdiff(d4p$cellType3, tmp_df$cellType3)))
+
+d4p %>%
+  ggplot(aes(x = cellType3, y = Percent, fill = NN_tissue)) +
+  geom_col() +
+  scale_fill_manual(values = origin4_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+# save
+d4p %>% pivot_wider(id_cols = "cellType3", names_from = "NN_tissue", values_from = "Percent") %>%
+  write_tsv(here::here("output", DOCNAME, paste0(t, ".exp_similarity.cross_tissue.percent.txt")))
+d4p %>% pivot_wider(id_cols = "cellType3", names_from = "NN_tissue", values_from = "n") %>%
+  write_tsv(here::here("output", DOCNAME, paste0(t, ".exp_similarity.cross_tissue.number.txt")))
+```
+
+### Facet by cellType3
+
+```{r fig.width=12, fig.height=20}
+d4p %>%
+  ggplot(aes(x = NN_tissue, y = Percent, fill = NN_tissue)) +
+  geom_col() +
+  scale_fill_manual(values = origin4_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  facet_wrap(.~cellType3) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+## Session info

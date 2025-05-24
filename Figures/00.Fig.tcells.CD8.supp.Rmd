@@ -1,0 +1,466 @@
+---
+title: "00.Fig.tcells.CD8.supp"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "Fig.tcells.CD8.supp"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = TRUE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+
+# patch
+library(patchwork)
+library(cowplot)
+theme_set(theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+))
+my_theme <- theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+)
+geom.text.size <- 6 / (14 / 5)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+
+# color
+library(ggsci)
+
+# pvclust
+library(pvclust)
+library(dendextend)
+
+# Seurat
+library(Seurat)
+
+# monocle
+library(monocle)
+
+# CytoTRACE
+library(CytoTRACE)
+```
+
+Load code
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+Load rds
+
+```{r load-rds, cache=FALSE}
+srat <- readRDS(here::here("output/04.rm_cells/seurat_cd8.rds"))
+Idents(srat) <- "level_3"
+srat
+```
+
+Load cell meta
+
+```{r load-cell-meta, cache=FALSE, message=FALSE, warning=FALSE}
+cell_meta <- read_csv(here::here("output/04.rm_cells/seurat_cd8.cellmeta.csv")) %>%
+  dplyr::select(barcode, seurat_clusters, level_2, level_3)
+head(cell_meta)
+```
+
+Cell annotations
+
+```{r anno, cache=FALSE}
+df.c2c <- readRDS(here::here("data", "c2c.t.rds"))
+head(df.c2c)
+```
+
+## UMAP {.tabset}
+
+### Level 3
+
+```{r fig.width=3, fig.height=2.5, cache=FALSE}
+p.umap.celltype <- DimPlot(srat, reduction = "umap", group.by = "level_3", raster = TRUE) +
+  scale_color_manual(values = t_level_3_color) +
+  labs(title = NULL) +
+  my_theme +
+  # guides(color = guide_legend(ncol = 4, byrow = TRUE)) +
+  theme(
+    legend.margin = margin(rep(0, 4), unit = "cm"),
+    legend.spacing.y = unit(0, "cm"),
+    legend.key.height = unit(.4, "cm"),
+    legend.box.margin = margin(rep(-.2, 4), unit = "cm"),
+    legend.position = "right"
+  )
+p.umap.celltype
+
+# saveRDS(p.umap.level_3, file = here::here("output", DOCNAME, "Fig.umap.cellType.rds"))
+ggsave2(p.umap.celltype,
+  filename = here::here("output", DOCNAME, "Fig.umap.cellType.pdf"),
+  height = 2.5, width = 3, device = cairo_pdf
+)
+```
+
+With label
+
+```{r fig.width=1.8, fig.height=1.9, cache=FALSE}
+p.umap.celltype.label <- DimPlot(srat,
+  reduction = "umap", group.by = "level_3",
+  label = TRUE, label.size = geom.text.size,
+  raster = TRUE
+) +
+  scale_color_manual(values = t_level_3_color) +
+  labs(title = NULL) +
+  my_theme +
+  theme(legend.position = "none")
+p.umap.celltype.label
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.umap.cellType.labelled.pdf"),
+  height = 1.9, width = 1.8, device = cairo_pdf
+)
+```
+
+## Classification markers
+
+Heatmap
+
+```{r fig.width=2.3, fig.height=2.8}
+markers <- list(
+  Nai = c("CCR7", "SELL", "TCF7", "LEF1"),
+  Mem = c("CD44", "LMNA", "ANXA1", "GPR183"),
+  # Trm = c("CD69", "ITGAE", "IL2RB"),
+  Cyto = c("ICOS", "CD27", "CD28", "CXCR5"),
+  Check = c("HAVCR2", "LAG3", "PDCD1", "ENTPD1", "LAYN", "CTLA4"),
+  Costi = c("RGS5", "MCAM", "PDGFRB", "COL4A1", "COL4A2")
+)
+
+mat <- AverageExpression(srat,
+  assays = "RNA", features = unlist(markers),
+  slot = "data", verbose = F
+)$RNA
+mat <- log1p(as.matrix(mat))
+# scale
+mat_scale <- pheatmap:::scale_rows(mat)
+
+# no Unknown
+mat_scale <- mat_scale[, -31]
+
+# color
+x <- ceiling(max(abs(mat_scale)))
+col_fun <- circlize::colorRamp2(c(-x, 0, x), c("#476fa9", "#ffffff", "#ca3226"))
+legend_name <- "Exp."
+
+ht <- ComplexHeatmap::Heatmap(mat_scale,
+  name = legend_name,
+  col = col_fun,
+  cluster_columns = FALSE, cluster_rows = FALSE,
+  show_row_names = TRUE, show_column_names = TRUE,
+  row_names_side = "right",
+  row_names_gp = gpar(fontsize = 6, fontface = "italic"),
+  column_names_gp = gpar(fontsize = 6),
+  column_names_rot = 60,
+  row_split = factor(
+    rep(names(markers), sapply(markers, length)),
+    levels = names(markers)
+  ),
+  row_title_gp = gpar(fontsize = 6),
+  column_title = NULL,
+  left_annotation = rowAnnotation(
+    empty = anno_empty(
+      border = FALSE,
+      width = unit(1, "mm")
+    ),
+    foo = anno_block(
+      gp = gpar(
+        fill = "gray",
+        col = "gray"
+      ),
+      width = unit(0.5, "mm")
+    )
+  ),
+  heatmap_legend_param = list(
+    title_position = "topcenter",
+    direction = "vertical",
+    labels_gp = gpar(fontsize = 6),
+    title_gp = gpar(fontsize = 6),
+    grid_height = unit(3, "mm"),
+    grid_width = unit(3, "mm")
+  )
+)
+# draw(ht)
+p.classification_markers.heatmap <- plot_grid(grid.grabExpr(draw(ht)))
+p.classification_markers.heatmap
+
+ggsave2(p.classification_markers.heatmap,
+  filename = here::here("output", DOCNAME, "Fig.markers.heatmap.pdf"),
+  height = 2.8, width = 2.3, device = cairo_pdf
+)
+```
+
+
+## Composition plot
+
+### cellType compositions
+
+```{r cellType-compositions, fig.width=6, fig.height=3}
+cluster_byOrigin4 = srat@meta.data %>%
+  group_by(level_3, Origin4) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100)
+cluster_byPatient = srat@meta.data %>%
+  group_by(level_3, Patient) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100)
+cluster_cellNum = srat@meta.data %>%
+  group_by(level_3) %>%
+  summarise(n = n())
+
+p1 = ggplot(cluster_byOrigin4, aes(x = level_3, y = Percent, fill = Origin4)) +
+  geom_bar(stat = "identity", color = 'white') +
+  scale_fill_manual(values = origin4_color_maps) +
+  labs(fill = NULL, x = NULL) +
+  coord_flip() +
+  guides(fill = guide_legend(ncol=1, byrow=TRUE)) +
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_x_discrete(limits=rev) +
+  guides(fill = guide_legend(nrow=2, byrow=TRUE)) +
+  my_theme +
+  theme(legend.position = "top")
+p2 = ggplot(cluster_byPatient, aes(x = level_3, y = Percent, fill = Patient)) +
+  geom_bar(stat = "identity", color = 'white') +
+  scale_fill_manual(values = patient_color_maps) +
+  labs(fill = NULL, x = NULL) +
+  coord_flip() +
+  guides(fill = guide_legend(ncol=1, byrow=TRUE)) +
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_x_discrete(limits=rev) +
+  guides(fill = guide_legend(nrow=2, byrow=TRUE)) +
+  my_theme +
+  theme(legend.position = "top")
+p3 = ggplot(cluster_cellNum, aes(x = level_3, y = log2(n), fill = 'blue')) +
+  geom_bar(stat = "identity", color = '#00008f') +
+  scale_fill_manual(values = '#8f8fb1') +
+  labs(fill = NULL, x = NULL) +
+  coord_flip() +
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_x_discrete(limits=rev) +
+  guides(fill = guide_legend(nrow=2, byrow=TRUE)) +
+  my_theme +
+  theme(legend.position = "top")
+
+p.cellType.comp = p1 + p2 + p3 +
+  plot_layout(ncol = 3)
+p.cellType.comp
+
+ggsave2(p.cellType.comp,
+  filename = here::here("output", DOCNAME, "Fig.cellTypeComposition.pdf"),
+  height = 3.5, width = 6, device=cairo_pdf
+)
+```
+
+### Sample composition
+
+Source
+
+```{r sample-compositions, fig.width=8.2, fig.height=3}
+p <- PlotSampleFraction(seurat_obj = srat, "level_3", t_level_3_color)
+p
+
+#saveRDS(p, file = here::here("output", DOCNAME, "Fig.sampleComposition.rds"))
+ggsave2(p,
+  filename = here::here("output", DOCNAME, "Fig.sampleComposition.pdf"),
+  height = 3, width = 8.2, device=cairo_pdf
+)
+```
+
+## monocle2
+
+Random1 srat rds
+
+```{r load-srat-random1, cache=FALSE}
+srat.r1 <- readRDS(here::here("output/04.rm_cells/seurat_cd8.random1.rds"))
+Idents(srat.r1) <- "level_3"
+srat.r1
+```
+
+Pseudotime
+
+```{r plot-pseudotime-random1, fig.height=1.8, fig.width=2}
+p.psedutime <- FeaturePlot(srat.r1, features = "Pseudotime", reduction = "dt", raster = TRUE) +
+  # scale_color_manual(values = t_level_3_color) +
+  labs(title = NULL) +
+  my_theme
+p.psedutime
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.monocle2_pseudotime.pdf"),
+  height = 1.8, width = 2, device = cairo_pdf
+)
+```
+
+cluster
+
+```{r plot-finalAnno-random1, fig.height=1.8, fig.width=2.4}
+p.dt.celltype <- DimPlot(srat.r1, group.by = "level_3", reduction = "dt", raster = TRUE) +
+  scale_color_manual(values = t_level_3_color) +
+  labs(title = NULL) +
+  my_theme
+p.dt.celltype
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.monocle2_celltype.pdf"),
+  height = 1.8, width = 2.4, device = cairo_pdf
+)
+```
+
+## SCENIC
+
+Hallmark
+
+```{r fig.width=3, fig.height=2.8}
+cell_type <- "cd8.random1"
+anno_level <- "level_3"
+
+# load
+de_tf.glm_patient <- read_tsv(here::here("output", "DE_MSigDB_H", paste0(cell_type, ".de_MSigDB_H.glm_patient.tsv")))
+
+# cluster 2 cellType
+df_c2c <- readRDS(here::here("data", "c2c.t.rds")) %>%
+  filter(level_1 == "CD8") %>%
+  droplevels()
+
+# cell types
+d4p <- de_tf.glm_patient %>%
+  # mutate(cluster = factor(cluster)) %>%
+  left_join(df_c2c, by = "cluster") %>%
+  dplyr::rename(cellType3 = level_3)
+
+# t_mat
+t_mat <- d4p %>%
+  pivot_wider(id_cols = "gene", names_from = "cellType3", values_from = "t") %>%
+  column_to_rownames("gene")
+t_mat <- t_mat[, levels(d4p$cellType3)]
+
+# select rows to show
+selected_row <- d4p %>%
+  filter(p_adj < 0.05) %>% # keep only those with p_adj < 0.05
+  group_by(cluster) %>%
+  top_n(3, wt = t) %>%
+  pull(gene) %>%
+  unique()
+
+p.glm.H <- plot_heatmap_glm(as.matrix(t_mat[selected_row, ]),
+  cluster_columns = FALSE,
+  show_row_dend = FALSE
+)
+p.glm.H
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.DE_Hallmark.pdf"),
+  height = 2.8, width = 3, device = cairo_pdf
+)
+```
+
+TFs
+
+```{r fig.width=2.2, fig.height=3.2}
+cell_type <- "cd8.random1"
+anno_level <- "level_3"
+
+# load
+de_tf.glm_patient <- read_csv(here::here("output", paste0("DE_TF.", cell_type), "de_tf.glm_patient.csv"))
+
+# cluster 2 cellType
+df_c2c <- readRDS(here::here("data", "c2c.t.rds")) %>%
+  filter(level_1 == "CD8") %>%
+  droplevels()
+
+# cell types
+d4p <- de_tf.glm_patient %>%
+  # mutate(cluster = factor(cluster)) %>%
+  left_join(df_c2c, by = "cluster") %>%
+  dplyr::rename(cellType3 = level_3)
+
+# t_mat
+t_mat <- d4p %>%
+  pivot_wider(id_cols = "gene", names_from = "cellType3", values_from = "t") %>%
+  column_to_rownames("gene")
+t_mat <- t_mat[, levels(d4p$cellType3)]
+
+# select rows to show
+selected_row <- d4p %>%
+  filter(p_adj < 0.05) %>% # keep only those with p_adj < 0.05
+  group_by(cluster) %>%
+  top_n(3, wt = t) %>%
+  pull(gene) %>%
+  unique()
+
+# highligh
+highlight_rows <- "SOX4"
+
+p.glm.TF <- plot_heatmap_glm(as.matrix(t_mat[selected_row, ]),
+  cluster_columns = FALSE,
+  highlight_rows = highlight_rows,
+  show_row_dend = FALSE
+)
+p.glm.TF
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.DE_TFs.pdf"),
+  height = 3.2, width = 2.2, device = cairo_pdf
+)
+```
+
+
+
+
+## Session info
+

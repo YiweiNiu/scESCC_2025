@@ -1,0 +1,270 @@
+---
+title: "00.Fig.tcells.Treg"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "Fig.tcells.Treg"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = FALSE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+
+# patch
+library(patchwork)
+library(cowplot)
+theme_set(theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+))
+my_theme <- theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+)
+geom.text.size <- 6 / (14 / 5)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+library(circlize)
+
+# color
+library(ggsci)
+
+# pvclust
+library(pvclust)
+library(dendextend)
+
+# Seurat
+library(Seurat)
+
+# monocle
+library(monocle3)
+
+# CytoTRACE
+library(CytoTRACE)
+```
+
+Load code
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+Load rds
+
+```{r load-rds, cache=FALSE}
+srat <- readRDS(here::here("output/04.rm_cells/seurat_treg.rds"))
+Idents(srat) <- "level_3"
+srat
+```
+
+Load cell meta
+
+```{r load-cell-meta, cache=FALSE, message=FALSE, warning=FALSE}
+cell_meta <- read_csv(here::here("output/04.rm_cells/seurat_treg.cellmeta.csv")) %>%
+  dplyr::select(barcode, seurat_clusters, level_2, level_3)
+head(cell_meta)
+```
+
+Cell annotations
+
+```{r anno, cache=FALSE}
+df.c2c <- readRDS(here::here("data", "c2c.t.rds"))
+head(df.c2c)
+```
+
+## UMAP {.tabset}
+
+### Level 3
+
+```{r fig.width=3, fig.height=2.5, cache=FALSE}
+p.umap.celltype <- DimPlot(srat, reduction = "umap", group.by = "level_3", raster = TRUE) +
+  scale_color_manual(values = t_level_3_color) +
+  labs(title = NULL) +
+  my_theme +
+  # guides(color = guide_legend(ncol = 4, byrow = TRUE)) +
+  theme(
+    legend.margin = margin(rep(0, 4), unit = "cm"),
+    legend.spacing.y = unit(0, "cm"),
+    legend.key.height = unit(.4, "cm"),
+    legend.box.margin = margin(rep(-.2, 4), unit = "cm"),
+    legend.position = "right"
+  )
+p.umap.celltype
+
+# saveRDS(p.umap.level_3, file = here::here("output", DOCNAME, "Fig.umap.cellType.rds"))
+ggsave2(p.umap.celltype,
+  filename = here::here("output", DOCNAME, "Fig.umap.cellType.pdf"),
+  height = 2.5, width = 3, device = cairo_pdf
+)
+```
+
+With label
+
+```{r fig.width=1.8, fig.height=1.9, cache=FALSE}
+p.umap.celltype.label <- DimPlot(srat,
+  reduction = "umap", group.by = "level_3",
+  label = TRUE, label.size = geom.text.size,
+  raster = TRUE
+) +
+  scale_color_manual(values = t_level_3_color) +
+  labs(title = NULL) +
+  my_theme +
+  theme(legend.position = "none")
+p.umap.celltype.label
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.umap.cellType.labelled.pdf"),
+  height = 1.9, width = 1.8, device = cairo_pdf
+)
+```
+
+## monocle3
+
+Load rds (save time)
+
+```{r load-rds, cache=FALSE}
+cds = readRDS(here::here('output/04.rm_cells/monocle3_treg.rds'))
+cds
+```
+
+trajectory
+
+```{r fig.width=3, fig.height=3}
+p.monocle3_trajectory <- plot_cells(cds,
+  label_groups_by_cluster = FALSE,
+  color_cells_by = "level_3",
+  label_leaves = FALSE,
+  label_branch_points = FALSE
+) +
+  scale_color_manual(values = t_level_3_color) +
+  my_theme +
+  theme(legend.position = c(.1, .85))
+p.monocle3_trajectory
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.monocle3_trajectory.pdf"),
+  height = 3, width = 3, device = cairo_pdf
+)
+```
+
+Pseudotime
+
+```{r fig.width=3.2, fig.height=3}
+p <- plot_cells(cds, color_cells_by = "pseudotime",
+           label_cell_groups = FALSE, label_leaves = FALSE, 
+           label_branch_points = FALSE) +
+  my_theme
+p
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.monocle3_pseudotime.pdf"),
+  height = 3, width = 3.2, device = cairo_pdf
+)
+```
+
+Genes
+
+```{r fig.width=6, fig.height=6}
+pr_deg_ids = readRDS(here::here('output/04.rm_cells/monocle3_treg.pr_deg_ids.rds'))
+pt.matrix <- exprs(cds)[match(pr_deg_ids, rownames(rowData(cds))), order(pseudotime(cds))]
+#Can also use "normalized_counts" instead of "exprs" to use various normalization methods, for example:
+#normalized_counts(cds, norm_method = "log")
+
+pt.matrix <- t(apply(pt.matrix,1,function(x){smooth.spline(x,df=3)$y}))
+pt.matrix <- t(apply(pt.matrix,1,function(x){(x-mean(x))/sd(x)}))
+rownames(pt.matrix) <- pr_deg_ids
+
+#Ward.D2 Hierarchical Clustering
+hthc <- Heatmap(
+  pt.matrix,
+  name                         = "z-score",
+  col                          = colorRamp2(seq(from=-2,to=2,length=11), rev(brewer.pal(11, "Spectral"))),
+  show_row_names               = TRUE,
+  show_column_names            = FALSE,
+  row_names_gp                 = gpar(fontsize = 8),
+  clustering_method_rows       = "ward.D2",
+  clustering_method_columns    = "ward.D2",
+  row_title_rot                = 0,
+  cluster_rows                 = TRUE,
+  cluster_row_slices           = FALSE,
+  cluster_columns              = FALSE)
+#draw(hthc)
+p <- plot_grid(grid.grabExpr(draw(hthc)))
+p
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.monocle3_gene.pdf"),
+  height = 6, width = 6, device = cairo_pdf
+)
+```
+
+SOX4
+
+```{r fig.width=2, fig.height=1.8}
+FeaturePlot(srat, features = "SOX4", pt.size = .1, order = T) +
+  labs(title = NULL) +
+  my_theme
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.monocle3_genes.Treg.SOX4.pdf"),
+  width = 2, height = 1.8
+)
+```
+
+
+## Session info
+
+
+

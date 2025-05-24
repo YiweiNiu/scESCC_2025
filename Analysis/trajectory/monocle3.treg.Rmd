@@ -1,0 +1,248 @@
+---
+title: "monocle3.treg"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME = "monocle3.treg"
+#dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+    if (before) {
+        print(paste("Start:", Sys.time()))
+        NOW <<- Sys.time()
+    } else {
+        print(paste("Stop:", Sys.time()))
+        print(Sys.time() - NOW)
+    }
+})
+
+knitr::opts_chunk$set(
+    autodep        = TRUE,
+    cache          = FALSE,
+    cache.path     = paste0("cache/", DOCNAME, "/"),
+    cache.lazy     = FALSE, 
+    cache.comments = FALSE,
+    echo           = TRUE,
+    error          = FALSE,
+    fig.align      = "center",
+    fig.width      = 10,
+    fig.height     = 8,
+    message        = FALSE,
+    warning        = FALSE,
+    timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, warning=FALSE, message=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(ggcorrplot)
+library(pheatmap)
+library(ComplexHeatmap)
+library(circlize)
+library(ggpubr)
+library(ggplotify)
+library(ggrepel)
+
+# patch
+library(cowplot)
+theme_set(theme_cowplot(font_size = 12,
+                        rel_small = 10/12,
+                        rel_tiny = 8/12,
+                        rel_large = 12/12,
+                        font_family = "Arial"))
+library(patchwork)
+
+# color
+library(ggsci)
+
+# fonts
+library(extrafont)
+#font_import()
+#font_import(paths = "/T02Data/niuyw/.local/share/fonts")
+loadfonts(device = "pdf", quiet = TRUE)
+
+# Seurat
+library(Seurat)
+
+# monocle
+library(SeuratWrappers)
+library(monocle3)
+```
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+Load rds (save time)
+
+```{r load-rds, cache=FALSE}
+# Load seurat
+seurat = readRDS(here::here('output/04.rm_cells/seurat_treg.rds'))
+seurat
+cds = readRDS(here::here('output/04.rm_cells/monocle3_treg.rds'))
+cds
+```
+
+## Build cds
+
+```{r build-cds, cache=FALSE, eval=FALSE}
+# Load seurat
+seurat = readRDS(here::here('output/04.rm_cells/seurat_treg.rds'))
+seurat
+
+# to cds
+cds = as.cell_data_set(seurat)
+
+# Cluster cells
+cds <- cluster_cells(cds)
+
+# Constructing trajectories
+cds <- learn_graph(cds)
+
+# save
+saveRDS(cds, file = here::here('output/04.rm_cells/monocle3_treg.rds'))
+```
+
+## Cluster
+
+Cluster by Seurat or Monocle3
+
+```{r plot-cluster, fig.width=12, fig.height=5, warning=FALSE}
+# plot labeled by seurat cluaters
+p1 = DimPlot(seurat, group.by = 'level_2') +
+  scale_color_manual(values = t_level_2_color) +
+  labs(title = "Seurat")
+p2 = plot_cells(cds, color_cells_by = "partition",
+                show_trajectory_graph = FALSE,
+                group_label_size = 3) +
+  labs(title = "Monocle3")
+p1 + p2
+```
+
+## Level_3
+
+```{r plot-level_3, fig.width=12, fig.height=5}
+# plot labeled by seurat cluaters
+p1 = DimPlot(seurat, group.by = 'level_3') +
+  scale_color_manual(values = t_level_3_color) +
+  labs(title = "Seurat")
+p2 = DimPlot(seurat, group.by = 'seurat_clusters',
+             label = TRUE) +
+  scale_color_manual(values = cluster_color_maps) +
+  NoLegend() +
+  labs(title = "Seurat")
+
+p1 + p2
+```
+
+## Trajectory
+
+```{r Trajectory, fig.width=6, fig.height=5}
+plot_cells(cds,
+           color_cells_by = "level_3",
+           group_label_size = 3,
+           label_groups_by_cluster = FALSE,
+           label_leaves = FALSE,
+           label_branch_points = FALSE,
+           cell_size = 1) +
+  labs(title = "Monocle3")
+```
+
+## Pseudotime
+
+Order the cells in pseudotime
+
+```{r order-cell, eval=FALSE}
+# 此处为手动选 root node
+cds <- order_cells(cds)
+saveRDS(cds, file = here::here('output/04.rm_cells/monocle3_treg.rds'))
+data.frame(cell = names(pseudotime(cds)), Pseudotime = pseudotime(cds)) %>%
+  write_csv(file = here::here('output/04.rm_cells/monocle3_treg.pseudotime.csv'))
+```
+
+Plotting the cells and coloring them by pseudotime shows how they were ordered:
+
+```{r plot-pseudotime, fig.width=12, fig.height=5}
+p1 = plot_cells(cds,
+                color_cells_by = "pseudotime",
+                label_cell_groups=FALSE,
+                label_leaves=FALSE,
+                label_branch_points=FALSE,
+                #cell_size = 1,
+                graph_label_size=1.5)
+p2 = plot_cells(cds,
+                color_cells_by = "pseudotime",
+                show_trajectory_graph = FALSE,
+                label_cell_groups=FALSE,
+                label_leaves=FALSE,
+                label_branch_points=FALSE,
+                #cell_size = 1,
+                graph_label_size=1.5)
+p1 + p2
+```
+
+## Genes
+
+Finding genes that change as a function of pseudotime
+
+```{r pseudotime-genes, eval=FALSE}
+ciliated_cds_pr_test_res <- graph_test(cds, neighbor_graph="principal_graph", cores=8)
+ciliated_cds_pr_test_res = ciliated_cds_pr_test_res %>%
+    arrange(-morans_I)
+saveRDS(ciliated_cds_pr_test_res, file = here::here('output/04.rm_cells/monocle3_treg.graph_test.rds'))
+ciliated_cds_pr_test_res %>%
+  rownames_to_column("gene") %>% 
+  write_tsv(here::here('output/04.rm_cells/monocle3_treg.graph_test.tsv'))
+
+pr_deg_ids <- row.names(subset(ciliated_cds_pr_test_res, q_value == 0 & morans_I > 0.25))
+saveRDS(pr_deg_ids, file = here::here('output/04.rm_cells/monocle3_treg.pr_deg_ids.rds'))
+```
+
+```{r pseudotime-genes-load}
+pr_deg_ids = readRDS(here::here('output/04.rm_cells/monocle3_treg.pr_deg_ids.rds'))
+length(pr_deg_ids)
+pr_deg_ids
+```
+
+Plot genes along pseudotime
+
+```{r plot-genes-pseudotime, fig.width=7, fig.height=6}
+pt.matrix <- exprs(cds)[match(pr_deg_ids, rownames(rowData(cds))), order(pseudotime(cds))]
+#Can also use "normalized_counts" instead of "exprs" to use various normalization methods, for example:
+#normalized_counts(cds, norm_method = "log")
+
+pt.matrix <- t(apply(pt.matrix,1,function(x){smooth.spline(x,df=3)$y}))
+pt.matrix <- t(apply(pt.matrix,1,function(x){(x-mean(x))/sd(x)}))
+rownames(pt.matrix) <- pr_deg_ids
+
+#Ward.D2 Hierarchical Clustering
+hthc <- Heatmap(
+  pt.matrix,
+  name                         = "z-score",
+  col                          = colorRamp2(seq(from=-2,to=2,length=11), rev(brewer.pal(11, "Spectral"))),
+  show_row_names               = TRUE,
+  show_column_names            = FALSE,
+  row_names_gp                 = gpar(fontsize = 8),
+  clustering_method_rows       = "ward.D2",
+  clustering_method_columns    = "ward.D2",
+  row_title_rot                = 0,
+  cluster_rows                 = TRUE,
+  cluster_row_slices           = FALSE,
+  cluster_columns              = FALSE)
+draw(hthc)
+```
+
+
+## Session info
+

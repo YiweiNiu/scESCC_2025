@@ -1,0 +1,556 @@
+---
+title: "00.Fig.tcells"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "00.Fig.tcells"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = FALSE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+library(UpSetR)
+
+# patch
+library(patchwork)
+library(cowplot)
+my_theme <- theme_cowplot(
+  font_size = 6,# Overall font size
+  rel_small = 6 / 6,# axis tick labels
+  rel_tiny = 6 / 6,# caption
+  rel_large = 6 / 6 # title
+)
+geom.text.size <- 6 / (14 / 5)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+
+# color
+library(ggsci)
+
+# Seurat
+library(Seurat)
+```
+
+Load code
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+Load meta data
+
+```{r load-meta, message=FALSE, warning=FALSE}
+meta.data <- read_csv(here::here("output/04.rm_cells/seurat_tcells.cellmeta.csv"))
+sam_info <- read_csv(here::here("data/sample_info.3.csv")) %>%
+  mutate(cell.filtered = as.numeric(cell.filtered))
+```
+
+Load rds
+
+```{r load-rds, cache=FALSE}
+srat = readRDS(here::here('output/04.rm_cells/seurat_tcells.rds'))
+Idents(srat) <- 'level_3'
+srat
+```
+
+## UMAP {.tabset}
+
+### Level 3
+
+```{r fig.width=2.5, fig.height=3.5, cache=FALSE}
+p.umap.celltype = DimPlot(srat, reduction = 'umap', group.by = 'level_3') + 
+  scale_color_manual(values = t_level_3_color) +
+  labs(title = NULL) +
+  my_theme +
+  guides(color = guide_legend(ncol = 4, byrow = TRUE)) +
+  theme(legend.margin = margin(rep(0, 4), unit = "cm"),
+        legend.spacing.y = unit(0, "cm"),
+        legend.key.height = unit(.4, "cm"),
+        legend.box.margin = margin(rep(-.2, 4), unit = "cm"),
+        legend.position = "bottom")
+p.umap.celltype
+
+#saveRDS(p.umap.celltype, file = here::here("output", DOCNAME, "Fig.umap.cellType.rds"))
+ggsave2(p.umap.celltype, filename = here::here("output", DOCNAME, "Fig.umap.cellType.pdf"),
+        height = 3.5, width = 2.5, device=cairo_pdf)
+```
+
+With label
+
+```{r fig.width=2.5, fig.height=2.5, cache=FALSE}
+p.umap.celltype = DimPlot(srat, reduction = 'umap', group.by = 'level_3',
+                          label = TRUE, label.size = geom.text.size,
+                          raster = TRUE) + 
+  scale_color_manual(values = t_level_3_color) +
+  labs(title = NULL) +
+  my_theme +
+  theme(legend.position = "none")
+p.umap.celltype
+
+ggsave2(filename = here::here("output", DOCNAME, "Fig.umap.cellType.labelled.pdf"),
+        height = 2.5, width = 2.5, device=cairo_pdf)
+```
+
+## Classification markers
+
+Heatmap
+
+```{r fig.width=4.25, fig.height=4}
+markers = list(
+  Nai = c('CCR7', 'SELL', 'TCF7', 'LEF1'),
+  Mem = c('CD44', 'LMNA', 'ANXA1', 'GPR183'),
+  #Trm = c("CD69", "ITGAE", "IL2RB"),
+  Cyto = c('ICOS', 'CD27', 'CD28', "CXCR5"),
+  Check = c("HAVCR2", "LAG3", "PDCD1", "ENTPD1", "LAYN", "CTLA4"),
+  Costi = c("RGS5", "MCAM", "PDGFRB", "COL4A1", "COL4A2"),
+  Treg = c("FOXP3", "IL2RA"),
+  Gdt = c("TRGV4", "TRAV3", "ZNF683", "TRGV2"),
+  NKT = c("KLRB1", "NKG7")
+)
+
+mat = AverageExpression(srat, assays = "RNA", features = unlist(markers),
+                        slot = "data", verbose = F)$RNA
+mat = log1p(as.matrix(mat))
+# scale
+mat_scale = pheatmap:::scale_rows(mat)
+
+# no Unknown
+mat_scale = mat_scale[,-31]
+
+# change order
+mat_scale <- mat_scale[,c("CD4-C2-Tn", "CD4-C3-Tn", "CD4-C4-Tn", "CD4-C6-Tn", "CD4-C7-Tn", "CD4-C9-Tn", "CD4-C10-Tn", "CD4-C1-Tcm", "CD4-C5-Tcm", "CD4-C12-Tcm", "CD4-C11-Tem", "CD4-C8-Tfh", "Treg-C1", "Treg-C2", "Treg-C3", "CD8-C8-Tn", "CD8-C1-Tcm", "CD8-C9-Trm", "CD8-C3-Tem", "CD8-C4-Teff", "CD8-C5-Teff", "CD8-C6-Teff", "CD8-C10-Teff", "CD8-C2-Tex", "CD8-C7-Tex", "CD8-C11-Tex", "CD8-C12-Tex", "γδT-C1", "γδT-C2", "NK/NKT")]
+
+# color
+x = ceiling(max(abs(mat_scale)))
+col_fun = circlize::colorRamp2(c(-x, 0, x), c("#476fa9", "#ffffff", "#ca3226"))
+legend_name = 'Exp.'
+
+ht <- ComplexHeatmap::Heatmap(mat_scale, name = legend_name,
+                              col = col_fun,
+                              cluster_columns = FALSE, cluster_rows = FALSE,
+                              show_row_names = TRUE, show_column_names = TRUE,
+                              row_names_side = 'right',
+                              row_names_gp = gpar(fontsize = 6, fontface = "italic"),
+                              column_names_gp = gpar(fontsize = 6),
+                              column_names_rot = 60,
+                              row_split = factor(
+                                rep(names(markers), sapply(markers, length)),
+                                levels = names(markers)
+                              ),
+                              row_title_gp = gpar(fontsize = 6),
+                              column_split = factor(c(rep(c("CD4"), 12),
+                                                      rep(c("Treg"), 3),
+                                                      rep(c("CD8"), 12),
+                                                      rep(c("γδT"), 2),
+                                                      "NK/NKT"),
+                                                    levels = c("CD4", "Treg", "CD8", "γδT", "NK/NKT")),
+                              column_title = NULL,
+                              left_annotation = rowAnnotation(empty = anno_empty(border = FALSE,
+                                                                                 width = unit(1, "mm")), 
+                                                              foo = anno_block(gp = gpar(fill = "gray",
+                                                                                         col = "gray"),
+                                                                               width = unit(0.5, "mm"))),
+                              heatmap_legend_param = list(
+                                title_position = "topcenter",
+                                direction = 'vertical',
+                                labels_gp = gpar(fontsize = 6),
+                                title_gp = gpar(fontsize = 8),
+                                grid_height = unit(3, "mm"),
+                                grid_width = unit(3, "mm")
+                              ))
+#draw(ht)
+p.classification_markers.heatmap = plot_grid(grid.grabExpr(draw(ht)))
+p.classification_markers.heatmap
+
+# save
+saveRDS(p.classification_markers.heatmap, file = here::here("output", DOCNAME, "Fig.markers.heatmap.rds"))
+
+ggsave2(p.classification_markers.heatmap,
+  filename = here::here("output", DOCNAME, "Fig.markers.heatmap.pdf"),
+  height = 4, width = 4.25, device=cairo_pdf
+)
+```
+
+## Classification markers (small)
+
+Heatmap
+
+```{r fig.width=3, fig.height=2.5}
+ht <- ComplexHeatmap::Heatmap(mat_scale, name = legend_name,
+                              col = col_fun,
+                              cluster_columns = FALSE, cluster_rows = FALSE,
+                              show_row_names = TRUE, show_column_names = TRUE,
+                              row_names_side = 'right',
+                              row_names_gp = gpar(fontsize = 4, fontface = "italic"),
+                              column_names_gp = gpar(fontsize = 4),
+                              column_names_rot = 60,
+                              row_split = factor(
+                                rep(names(markers), sapply(markers, length)),
+                                levels = names(markers)
+                              ),
+                              row_title_gp = gpar(fontsize = 4),
+                              column_split = factor(c(rep(c("CD4"), 12),
+                                                      rep(c("Treg"), 3),
+                                                      rep(c("CD8"), 12),
+                                                      rep(c("γδT"), 2),
+                                                      "NK/NKT"),
+                                                    levels = c("CD4", "Treg", "CD8", "γδT", "NK/NKT")),
+                              column_title = NULL,
+                              left_annotation = rowAnnotation(empty = anno_empty(border = FALSE,
+                                                                                 width = unit(1, "mm")), 
+                                                              foo = anno_block(gp = gpar(fill = "gray",
+                                                                                         col = "gray"),
+                                                                               width = unit(0.5, "mm"))),
+                              heatmap_legend_param = list(
+                                title_position = "topcenter",
+                                direction = 'vertical',
+                                labels_gp = gpar(fontsize = 4),
+                                title_gp = gpar(fontsize = 6),
+                                grid_height = unit(3, "mm"),
+                                grid_width = unit(3, "mm")
+                              ))
+#draw(ht)
+p.classification_markers.heatmap = plot_grid(grid.grabExpr(draw(ht)))
+p.classification_markers.heatmap
+
+# save
+saveRDS(p.classification_markers.heatmap, file = here::here("output", DOCNAME, "Fig.markers.heatmap.small.rds"))
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.markers.heatmap.small.pdf"),
+  height = 2.5, width = 3, device=cairo_pdf
+)
+```
+
+## Fraction changes
+
+```{r fig.width=4, fig.height=2}
+# level2
+df_fc_cd8 <- meta.data %>%
+  filter(level_1 == "CD8") %>% 
+  group_by(level_2, Source) %>%
+  summarise(n = n()) %>%
+  mutate(n = as.numeric(n)) %>%
+  left_join(sam_info, "Source") %>%
+  mutate(value = (n / cell.filtered) * 100) %>%
+  dplyr::select(Origin2_n, Source, level_2, value) %>% 
+  group_by(Origin2_n, level_2) %>%
+  summarise(Percent = mean(value)) %>% 
+    mutate(
+    Origin2_n = factor(Origin2_n, levels = c(
+      "prePBMC", "postPBMC", "nLN", "pLN", "Normal", "Adjacent", "Tumor"
+    )),
+    level_2 = factor(level_2, levels = c("Tn", "Tcm", "Tem", "Trm", "Teff", "Tex"))
+  )
+
+df_fc_cd4 <- meta.data %>%
+  filter(level_1 %in% c("CD4", "Treg")) %>% 
+  group_by(level_2, Source) %>%
+  summarise(n = n()) %>%
+  mutate(n = as.numeric(n)) %>%
+  left_join(sam_info, "Source") %>%
+  mutate(value = (n / cell.filtered) * 100) %>%
+  dplyr::select(Origin2_n, Source, level_2, value) %>% 
+  group_by(Origin2_n, level_2) %>%
+  summarise(Percent = mean(value)) %>% 
+    mutate(
+    Origin2_n = factor(Origin2_n, levels = c(
+      "prePBMC", "postPBMC", "nLN", "pLN", "Normal", "Adjacent", "Tumor"
+    )),
+    level_2 = factor(level_2, levels = c("Tn", "Tcm", "Tem", "Tfh", "Treg"))
+  )
+
+p1 <- df_fc_cd8 %>% 
+  ggplot(aes(x = Origin2_n, y = Percent, color = level_2, group = level_2)) +
+  geom_line() +
+  geom_point() +
+  scale_color_manual(values = t_level_2_color[as.character(unique(df_fc_cd8$level_2))]) +
+  labs(x = NULL, color = NULL) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+p2 <- df_fc_cd4 %>% 
+  ggplot(aes(x = Origin2_n, y = Percent, color = level_2, group = level_2)) +
+  geom_line() +
+  geom_point() +
+  scale_color_manual(values = t_level_2_color[as.character(unique(df_fc_cd4$level_2))]) +
+  labs(x = NULL, color = NULL) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+p1 + p2
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.freq_change_t_level2.pdf"),
+  width = 3, height = 2
+)
+```
+
+### Level 2
+
+Neat
+
+```{r}
+tb.fc.level_2 <- meta.data %>%
+  filter(level_1 != "Unknown") %>% 
+  mutate(level_2_new = paste(level_1, level_2, sep = "-")) %>% 
+  group_by(level_2_new, Source) %>%
+  summarise(n = n()) %>%
+  mutate(n = as.numeric(n)) %>%
+  left_join(sam_info, "Source") %>%
+  mutate(value = (n / cell.filtered) * 100) %>%
+  # 贲门左1 和左2 都命名为贲门
+  mutate(Origin = case_when(
+    Origin %in% c("LN-LP1", "LN-LP2") ~ "LN-LP",
+    TRUE ~ as.character(Origin)
+  )) %>%
+  mutate(Tissue = factor(Tissue, levels = c("PBMC", "LN", "Normal", "Adjacent", "Tumor"))) %>%
+  mutate(
+    Origin2_n = factor(Origin2_n, levels = c(
+      "prePBMC", "postPBMC", "nLN", "pLN",
+      "Normal", "Adjacent", "Tumor"
+    ))
+  )
+```
+
+cmp
+
+```{r}
+group_2_p <- ggpubr::compare_means(value ~ Origin2_n, data = tb.fc.level_2, group.by = "level_2_new") %>% 
+  filter(p < 0.05) %>% 
+  pull(level_2_new) %>% 
+  unique()
+group_2_p
+```
+
+Plot
+
+```{r fig.width=6, fig.height=5}
+plst <- lapply(group_2_p[-1], function(x) {
+  PlotFracChange(tb.fc.level_2 %>% filter(level_2_new == x),
+    x = "Origin2_n",
+    title = x
+  ) +
+    my_theme +
+    theme(axis.text.x = element_text(angle = 60, hjust = 1))
+})
+plst %>%
+  wrap_plots(ncol = 4, guides = "collect")
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.freq_change_t_level2.supp.pdf"),
+  width = 6, height = 5
+)
+```
+
+## Roe Origin4
+
+```{r fig.width=2, fig.height=4, warning=FALSE}
+p.roe.t = readRDS(here::here("output", "freq.enrichment_cellType3", "p.roe.t.rds"))
+p.roe.t
+
+ggsave2(p.roe.t, filename = here::here("output", DOCNAME, "Fig.roe_t.pdf"),
+        height = 4, width = 2)
+```
+
+## VDJ
+
+### Tissue-shared
+
+Load data
+
+```{r load-clone, cache=FALSE, message=FALSE, warning=FALSE}
+metadata = read_csv(here::here("output/04.rm_cells/seurat_tcells.cellmeta.csv")) %>%
+  filter(level_1 %in% c("CD4", "CD8", "Treg"))
+clones = read_csv('/work/home/project/scESCA/cellranger/TCR/200121_6samples.clonotype_tcr.csv')
+```
+
+Merge metadata with clonotypes
+
+```{r merge-meta-clonotypes}
+clones = clones %>%
+  filter(clonotype != 'None') %>%  # cells with alpha-beta pair
+  mutate(clonotype_size = as.numeric(clonotype_size)) %>%
+  mutate(clonal_expansion = case_when(
+    clonotype_size == 1 ~ 'No',
+    TRUE ~ 'Clonal'
+  ))
+
+# d_4_p
+d_4_p = metadata %>%
+  left_join(clones, by = 'barcode') %>%
+  filter(!is.na(clonotype)) %>%
+  mutate(seurat_clusters = as.factor(seurat_clusters)) %>%
+  mutate(Tissue = factor(Tissue, levels = c("PBMC", "LN", "Normal", "Adjacent", "Tumor"))) %>%
+  mutate(Origin = factor(Origin, levels = c("PBMC1", "PBMC2",
+                                            'LN-LR', 'LN-RR', 'LN-UTP1', 'LN-UTP2', 'LN-ITP',
+                                            'LN-LTP', 'LN-LP', 'LN-LP1', 'LN-LP2', 'LN-LG',
+                                            "Normal", "Adjacent",
+                                            "Tumor_core", "Tumor_invasion", "Tumor_middle"))) %>%
+  mutate(Origin2_n = factor(Origin2_n, levels = c("prePBMC", "postPBMC", "nLN", "pLN", "Normal", "Adjacent", "Tumor")),
+         Origin4 = factor(Origin4, levels = c("prePBMC", "postPBMC", "nLN", "m_nLN", "m_pLN", "Normal", "Adjacent", "Tumor")),
+         Origin3 = factor(Origin3, levels = c("PBMC1", "PBMC2", "LN_Up", "LN_Down", "Normal", "Adjacent", "Tumor")),
+         Metastatic = factor(Metastatic, levels = c("None", "N", "P")))
+```
+
+9047 clonotypes were tissue-shared (!!!! Origin2_n).
+
+```{r tissue_shared, cache=FALSE}
+tmp = d_4_p %>%
+  group_by(clonotype, Origin2_n) %>%
+  summarise(n = n()) %>%
+  mutate(n = n_distinct(clonotype, Origin2_n)) %>%
+  dplyr::select(clonotype, n) %>%
+  mutate(tissue_shared = ifelse(n > 1, 'Yes', 'No')) %>%
+  dplyr::select(clonotype, tissue_shared)
+d_4_p = d_4_p %>%
+  left_join(tmp, by = 'clonotype')
+table(tmp$tissue_shared)
+```
+
+Comparison between fraction of clonal cells in each cluster (x axis) and percentage of cells with TCRs shared across tissues (y axis).
+
+```{r clonal-inter-tissue-level_3, fig.height=3, fig.width=4}
+a = d_4_p %>%
+  group_by(level_3, clonal_expansion) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(clonal_expansion == 'Clonal')
+b = d_4_p %>%
+  unite('z', tissue_shared, clonal_expansion, remove = FALSE) %>%
+  group_by(level_3, z) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n/sum(n) * 100) %>%
+  filter(z == 'Yes_Clonal')
+
+a %>%
+  left_join(b, by = 'level_3') %>%
+  ggplot(aes(x = Percent.x, y = Percent.y, label = level_3)) +
+  geom_point(color = '#006485', size = 3) +
+  geom_text_repel(max.overlaps = 20) +
+  labs(x = 'Clonal cells in each cluster (%)',
+       y = 'Inter-tissue clonal cells in each cluster (%)',
+       title = 'Inter-tissue clonal cells') +
+  my_theme
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.vdj_inter_tissue.pdf"),
+  width = 4, height = 3
+)
+```
+
+### overlap by Origin2
+
+```{r ov-Origin2_n, fig.width=4, fig.height=4}
+PlotRepOverlap(RepOverlap(d_4_p, "Origin2_n"))
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.VDJ_overlap_Origin2_n.pdf"),
+  height = 4, width = 4, device = cairo_pdf
+)
+```
+
+### C11-Tex
+
+```{r fig.width=3, fig.height=2}
+x <- RepOverlap(d_4_p, "level_3")["CD8-C11-Tex",] * 100
+data.frame(cell = names(x), value = x) %>% 
+  na.omit() %>% 
+  ggplot(aes(x = reorder(cell, -value), y = value, fill = cell)) +
+  geom_col() +
+  scale_fill_manual(values = t_level_3_color) +
+  scale_y_continuous(expand = c(0, 0)) +
+  labs(x = NULL, y = "% shared clonotypes from C11-Tex to others") +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 60, hjust = 1))
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.VDJ_overlap_C11-Tex_to_others.pdf"),
+  width = 3, height = 2, device = cairo_pdf
+)
+```
+
+Upset plot
+
+```{r fig.width=7, fig.height=3}
+cell_groups <- c("CD8-C11-Tex", "Treg-C2", "CD8-C5-Teff", "Treg-C1", "CD4-C8-Tfh", "CD8-C7-Tex", "CD8-C2-Tex", "Treg-C3")
+
+df <- d_4_p %>% 
+  filter(level_3 %in% cell_groups)
+
+x <- split(df$clonotype, df$level_3)
+upset(fromList(x), nsets = 8, nintersects = NA,
+      scale.intersections	= "log2",
+      sets.bar.color = t_level_3_color[cell_groups],
+      point.size = 1, line.size = 0.3,
+      text.scale = 0.8,
+      mb.ratio = c(0.5, 0.5),
+      number.angles = -15)
+
+pdf(file = here::here("output", DOCNAME, "Fig.VDJ_overlap_C11-Tex_to_others.upsetPlot.pdf"),
+    width = 7, height = 3)
+upset(fromList(x), nsets = 8, nintersects = NA,
+      scale.intersections	= "log2",
+      sets.bar.color = t_level_3_color[cell_groups],
+      point.size = 1, line.size = 0.3,
+      text.scale = 0.8,
+      mb.ratio = c(0.5, 0.5),
+      number.angles = -15)
+invisible(dev.off())
+```
+
+
+
+
+
+
+
+
+
+## Session info
+

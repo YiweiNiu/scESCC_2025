@@ -1,0 +1,569 @@
+---
+title: "00.Fig.2g"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "00.Fig.2g"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = FALSE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+#library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+
+# patch
+library(patchwork)
+library(cowplot)
+theme_set(theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+))
+my_theme <- theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+)
+geom.text.size <- 6 / (14 / 5)
+my.colors <- colorRampPalette(c("lightblue", "white", "darkred"))(100)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+
+# color
+library(ggsci)
+
+# Seurat
+library(Seurat)
+
+# monocle
+library(monocle)
+library(monocle3)
+```
+
+Load code
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+devtools::load_all(here::here("code/Rscir"))
+```
+
+## CD8
+
+```{r}
+cds_cd8 = readRDS(here::here('output/04.rm_cells/monocle2_cd8.random1.rds'))
+srat_cd8 = readRDS(here::here('output/04.rm_cells/seurat_cd8.random1.rds'))
+cds_cd8
+```
+
+cluster
+
+```{r fig.width=3, fig.height=2.5}
+cluster_cd8 <- DimPlot(srat_cd8, group.by = "level_3", reduction = "dt", shuffle = T) +
+  scale_color_manual(values = t_level_3_color) +
+  labs(title = NULL) +
+  my_theme +
+  # guides(color = guide_legend(ncol = 4, byrow = TRUE)) +
+  theme(
+    legend.margin = margin(rep(0, 4), unit = "cm"),
+    legend.spacing.y = unit(0, "cm"),
+    legend.key.height = unit(.4, "cm"),
+    legend.box.margin = margin(rep(-.2, 4), unit = "cm"),
+    legend.position = "right"
+  )
+
+cluster_cd8
+```
+
+Origin2
+
+```{r fig.width=3, fig.height=2.5}
+origin2_cd8 <- DimPlot(srat_cd8, group.by = "Origin2_n", reduction = "dt", shuffle = T) +
+  scale_color_manual(values = origin2_color_maps) +
+  labs(title = NULL) +
+  my_theme +
+  # guides(color = guide_legend(ncol = 4, byrow = TRUE)) +
+  theme(
+    legend.margin = margin(rep(0, 4), unit = "cm"),
+    legend.spacing.y = unit(0, "cm"),
+    legend.key.height = unit(.4, "cm"),
+    legend.box.margin = margin(rep(-.2, 4), unit = "cm"),
+    legend.position = "right"
+  )
+
+origin2_cd8
+```
+
+pseudotime
+
+```{r , fig.width=3, fig.height=2.5}
+pseudotime_cd8 <- plot_cell_trajectory(cds_cd8, color_by = "Pseudotime",
+                     cell_size = .5, show_branch_points = F,
+                     show_backbone = F, show_tree = F) +
+  viridis::scale_color_viridis(option = "C") +
+  my_theme
+pseudotime_cd8
+```
+
+SOX4
+
+```{r fig.width=3, fig.height=2.5}
+sox4_cd8 <- FeaturePlot(srat_cd8, features = c("SOX4"), reduction = "dt", order = TRUE) +
+  labs(title = NULL) +
+  my_theme
+
+sox4_cd8
+```
+
+## Treg
+
+```{r load-rds, cache=FALSE}
+srat_treg <- readRDS(here::here("output/04.rm_cells/seurat_treg.rds"))
+Idents(srat_treg) <- "level_3"
+cds_treg = readRDS(here::here('output/04.rm_cells/monocle3_treg.rds'))
+srat_treg
+```
+
+cluster
+
+```{r fig.width=3, fig.height=2.5}
+cluster_treg <- DimPlot(srat_treg, reduction = "umap", group.by = "level_3", raster = TRUE) +
+  scale_color_manual(values = t_level_3_color) +
+  labs(title = NULL) +
+  my_theme +
+  # guides(color = guide_legend(ncol = 4, byrow = TRUE)) +
+  theme(
+    legend.margin = margin(rep(0, 4), unit = "cm"),
+    legend.spacing.y = unit(0, "cm"),
+    legend.key.height = unit(.4, "cm"),
+    legend.box.margin = margin(rep(-.2, 4), unit = "cm"),
+    legend.position = "right"
+  )
+
+cluster_treg
+```
+
+Origin2
+
+```{r fig.width=3, fig.height=2.5}
+origin2_treg <- DimPlot(srat_treg, reduction = "umap", group.by = "Origin2_n", raster = TRUE) +
+  scale_color_manual(values = origin2_color_maps) +
+  labs(title = NULL) +
+  my_theme +
+  # guides(color = guide_legend(ncol = 4, byrow = TRUE)) +
+  theme(
+    legend.margin = margin(rep(0, 4), unit = "cm"),
+    legend.spacing.y = unit(0, "cm"),
+    legend.key.height = unit(.4, "cm"),
+    legend.box.margin = margin(rep(-.2, 4), unit = "cm"),
+    legend.position = "right"
+  )
+
+origin2_treg
+```
+
+Pseudotime
+
+```{r fig.width=3.2, fig.height=3}
+pseudotime_treg <- plot_cells(cds_treg, color_cells_by = "pseudotime",
+           label_cell_groups = FALSE, label_leaves = FALSE, 
+           show_trajectory_graph = FALSE) +
+  my_theme
+
+pseudotime_treg
+```
+
+SOX4
+
+```{r fig.width=2, fig.height=1.8}
+sox4_treg <- FeaturePlot(srat_treg, features = "SOX4", pt.size = .1, order = T) +
+  labs(title = NULL) +
+  my_theme
+
+sox4_treg
+```
+
+## NMF + iCAF
+
+```{r}
+srat_par1 <- readRDS(here::here("output/monocle3.fib.par_1/seurat_fibroblasts.par_1.rds"))
+cds_par1 <- readRDS(here::here("output/monocle3.fib.par_1/monocle3_fibroblasts.par_1.rds"))
+srat_par1
+```
+
+cluster
+
+```{r fig.width=3.5, fig.height=3}
+cluster_par1 <- DimPlot(srat_par1, group.by = "level_3", shuffle = T) +
+  scale_color_manual(values = fib_level_3_color) +
+  labs(title = NULL) +
+  my_theme +
+  # guides(color = guide_legend(ncol = 4, byrow = TRUE)) +
+  theme(
+    legend.margin = margin(rep(0, 4), unit = "cm"),
+    legend.spacing.y = unit(0, "cm"),
+    legend.key.height = unit(.4, "cm"),
+    legend.box.margin = margin(rep(-.2, 4), unit = "cm"),
+    legend.position = "right"
+  )
+
+cluster_par1
+```
+
+Origin2_n
+
+```{r fig.width=3.5, fig.height=3}
+origin2_par1 <- DimPlot(srat_par1, group.by = "Origin2_n", shuffle = T) +
+  scale_color_manual(values = origin2_color_maps) +
+  labs(title = NULL) +
+  my_theme +
+  # guides(color = guide_legend(ncol = 4, byrow = TRUE)) +
+  theme(
+    legend.margin = margin(rep(0, 4), unit = "cm"),
+    legend.spacing.y = unit(0, "cm"),
+    legend.key.height = unit(.4, "cm"),
+    legend.box.margin = margin(rep(-.2, 4), unit = "cm"),
+    legend.position = "right"
+  )
+
+origin2_par1
+```
+
+Pseudotime
+
+```{r fig.width=3.2, fig.height=3}
+pseudotime_par1 <- plot_cells(cds_par1, color_cells_by = "pseudotime",
+           label_cell_groups = FALSE, label_leaves = FALSE, 
+           show_trajectory_graph = FALSE) +
+  my_theme
+pseudotime_par1
+```
+
+SOX4
+
+```{r fig.width=2, fig.height=1.8}
+sox4_par1 <- FeaturePlot(srat_par1, features = "SOX4", pt.size = .3, order = T) +
+  labs(title = NULL) +
+  my_theme
+
+sox4_par1
+```
+
+## pericyte + myCAF
+
+```{r}
+srat_par2 <- readRDS(here::here("output/monocle3.fib.par_2/seurat_fibroblasts.par_2.rds"))
+cds_par2 <- readRDS(here::here("output/monocle3.fib.par_2/monocle3_fibroblasts.par_2.rds"))
+srat_par2
+```
+
+cluster
+
+```{r fig.width=3.5, fig.height=3}
+cluster_par2 <- DimPlot(srat_par2, group.by = "level_3", shuffle = T) +
+  scale_color_manual(values = fib_level_3_color) +
+  labs(title = NULL) +
+  my_theme +
+  # guides(color = guide_legend(ncol = 4, byrow = TRUE)) +
+  theme(
+    legend.margin = margin(rep(0, 4), unit = "cm"),
+    legend.spacing.y = unit(0, "cm"),
+    legend.key.height = unit(.4, "cm"),
+    legend.box.margin = margin(rep(-.2, 4), unit = "cm"),
+    legend.position = "right"
+  )
+cluster_par2
+```
+
+Origin2_n
+
+```{r fig.width=3.5, fig.height=3}
+origin2_par2 <- DimPlot(srat_par2, group.by = "Origin2", shuffle = T) +
+  scale_color_manual(values = origin2_color_maps) +
+  labs(title = NULL) +
+  my_theme +
+  # guides(color = guide_legend(ncol = 4, byrow = TRUE)) +
+  theme(
+    legend.margin = margin(rep(0, 4), unit = "cm"),
+    legend.spacing.y = unit(0, "cm"),
+    legend.key.height = unit(.4, "cm"),
+    legend.box.margin = margin(rep(-.2, 4), unit = "cm"),
+    legend.position = "right"
+  )
+origin2_par2
+```
+
+Pseudotime
+
+```{r fig.width=3.1, fig.height=3}
+pseudotime_par2 <- plot_cells(cds_par2, color_cells_by = "pseudotime",
+           label_cell_groups = FALSE, label_leaves = FALSE, 
+           show_trajectory_graph = FALSE) +
+  my_theme
+pseudotime_par2
+```
+
+SOX4
+
+```{r fig.width=2, fig.height=1.8}
+sox4_par2 <- FeaturePlot(srat_par2, features = "SOX4", pt.size = .3, order = T) +
+  labs(title = NULL) +
+  my_theme
+sox4_par2
+```
+
+## cDC2 + tDC
+
+```{r}
+cds_cDC2_tDC = readRDS(here::here('output/04.rm_cells/monocle3_cDC2_tDC.rds'))
+srat_cDC2_tDC = readRDS(here::here('output/04.rm_cells/seurat_cDC2_tDC.rds'))
+srat_cDC2_tDC
+```
+
+cluster
+
+```{r fig.width=3.5, fig.height=3}
+cluster_cDC2_tDC <- DimPlot(srat_cDC2_tDC, group.by = 'level_3', pt.size = .1) +
+  scale_color_manual(values = mye_level_3_color[c("cDC2-C1", "cDC2-C2", "mregDC-C3")]) +
+  labs(title = NULL) +
+  my_theme +
+  # guides(color = guide_legend(ncol = 4, byrow = TRUE)) +
+  theme(
+    legend.margin = margin(rep(0, 4), unit = "cm"),
+    legend.spacing.y = unit(0, "cm"),
+    legend.key.height = unit(.4, "cm"),
+    legend.box.margin = margin(rep(-.2, 4), unit = "cm"),
+    legend.position = "right"
+  )
+cluster_cDC2_tDC
+```
+
+Origin2_n
+
+```{r fig.width=3.5, fig.height=3}
+origin2_cDC2_tDC <- DimPlot(srat_cDC2_tDC, group.by = 'Origin2_n', pt.size = .1) +
+  scale_color_manual(values = origin2_color_maps) +
+  labs(title = NULL) +
+  my_theme +
+  # guides(color = guide_legend(ncol = 4, byrow = TRUE)) +
+  theme(
+    legend.margin = margin(rep(0, 4), unit = "cm"),
+    legend.spacing.y = unit(0, "cm"),
+    legend.key.height = unit(.4, "cm"),
+    legend.box.margin = margin(rep(-.2, 4), unit = "cm"),
+    legend.position = "right"
+  )
+origin2_cDC2_tDC
+```
+
+Pseudotime
+
+```{r fig.width=3.1, fig.height=3}
+pseudotime_cDC2_tDC <- plot_cells(cds_cDC2_tDC, color_cells_by = "pseudotime",
+           label_cell_groups = FALSE, label_leaves = FALSE, 
+           show_trajectory_graph = FALSE, cell_size = .5) +
+  my_theme
+pseudotime_cDC2_tDC
+```
+
+SOX4
+
+```{r fig.width=2, fig.height=1.8}
+sox4_cDC2_tDC <- FeaturePlot(srat_cDC2_tDC, features = "SOX4", pt.size = .5, order = T) +
+  labs(title = NULL) +
+  my_theme
+sox4_cDC2_tDC
+```
+
+## pDC
+
+```{r}
+srat_pDC = readRDS(here::here('output/04.rm_cells/seurat_pDC.rds'))
+cds_pDC = readRDS(here::here('output/04.rm_cells/monocle3_pDC.rds'))
+srat_pDC
+```
+
+cluster
+
+```{r fig.width=3.5, fig.height=3}
+cluster_pDC <- DimPlot(srat_pDC, group.by = 'level_3', pt.size = .5) +
+  scale_color_manual(values = mye_level_3_color) +
+  labs(title = NULL) +
+  my_theme +
+  # guides(color = guide_legend(ncol = 4, byrow = TRUE)) +
+  theme(
+    legend.margin = margin(rep(0, 4), unit = "cm"),
+    legend.spacing.y = unit(0, "cm"),
+    legend.key.height = unit(.4, "cm"),
+    legend.box.margin = margin(rep(-.2, 4), unit = "cm"),
+    legend.position = "right"
+  )
+cluster_pDC
+```
+
+Origin2_n
+
+```{r fig.width=3.5, fig.height=3}
+origin2_pDC <- DimPlot(srat_pDC, group.by = 'Origin2_n', pt.size = .5) +
+  scale_color_manual(values = origin2_color_maps) +
+  labs(title = NULL) +
+  my_theme +
+  # guides(color = guide_legend(ncol = 4, byrow = TRUE)) +
+  theme(
+    legend.margin = margin(rep(0, 4), unit = "cm"),
+    legend.spacing.y = unit(0, "cm"),
+    legend.key.height = unit(.4, "cm"),
+    legend.box.margin = margin(rep(-.2, 4), unit = "cm"),
+    legend.position = "right"
+  )
+origin2_pDC
+```
+
+Pseudotime
+
+```{r fig.width=3.1, fig.height=3}
+pseudotime_pDC <- plot_cells(cds_pDC, color_cells_by = "pseudotime",
+           label_cell_groups = FALSE, label_leaves = FALSE, 
+           show_trajectory_graph = FALSE, cell_size = .8) +
+  my_theme
+pseudotime_pDC
+```
+
+SOX4
+
+```{r fig.width=2, fig.height=1.8}
+sox4_pDC <- FeaturePlot(srat_pDC, features = "SOX4", pt.size = .5, order = T) +
+  labs(title = NULL) +
+  my_theme
+sox4_pDC
+```
+
+## Align
+
+cluster
+
+```{r fig.width=15, fig.height=2.5}
+p_cluster <- cluster_cd8 +
+  cluster_treg +
+  cluster_par2 +
+  cluster_par1 +
+  cluster_cDC2_tDC +
+  cluster_pDC +
+  plot_layout(nrow = 1)
+p_cluster
+```
+
+Origin2
+
+```{r fig.width=15, fig.height=2.3}
+p_tissue <- origin2_cd8 + origin2_treg + origin2_par2 + origin2_par1 + origin2_cDC2_tDC + origin2_pDC +
+  plot_layout(nrow = 1)
+p_tissue
+```
+
+pseudotime
+
+```{r fig.width=15, fig.height=2.3}
+p_pseudotime <- pseudotime_cd8 + pseudotime_treg + pseudotime_par2 + pseudotime_par1 + pseudotime_cDC2_tDC + pseudotime_pDC +
+  plot_layout(nrow = 1)
+p_pseudotime
+```
+
+sox4
+
+```{r fig.width=15, fig.height=2.4}
+p_sox4 <- sox4_cd8 + sox4_treg + sox4_par2 + sox4_par1 + sox4_cDC2_tDC + sox4_pDC +
+  plot_layout(nrow = 1, ncol = 6)
+p_sox4
+```
+
+All
+
+```{r fig.width=15, fig.height=9}
+p <- p_cluster/p_tissue/p_pseudotime/p_sox4 +
+  plot_layout(ncol = 1, heights = c(2.3, 2.2, 2.2, 2.3))
+p
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.2g.pdf"),
+  height = 9, width = 15
+)
+```
+
+## shared trajectory TFs
+
+```{r}
+srat <- readRDS(here::here("output/04.rm_cells/seurat.rds"))
+Idents(srat) <- "cellType3"
+srat
+```
+
+
+```{r}
+features <- c("SOX4", "REL", "BHLHE40", "NR4A2", "ATF3", "CREM", "FOSB",
+              "JUND", "FOS", "JUNB", "KLF6", "YBX1", "NR4A1", "STAT1", "ID2",
+              "NR4A3", "CHD1", "PHLDA2", "TAGLN2")
+mat <- AverageExpression(srat,
+  assays = "RNA", features = features,
+  slot = "data", verbose = F
+)$RNA
+mat <- log1p(as.matrix(mat))
+```
+
+
+
+
+
+
+
+## Session info
+
+
+

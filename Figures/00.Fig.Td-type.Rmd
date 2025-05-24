@@ -1,0 +1,486 @@
+---
+title: "00.Fig.Td-type"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "00.Fig.Td-type"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = TRUE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+library(corrplot)
+library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+
+# patch
+library(patchwork)
+library(cowplot)
+my_theme <- theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+)
+geom.text.size <- 6 / (14 / 5)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+
+# color
+library(ggsci)
+
+# Seurat
+library(Seurat)
+```
+
+Load code
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+## Load data
+
+Cluster to celltypes
+
+```{r message=FALSE, warning=FALSE}
+df_c2c <- readRDS(here::here("data", "cluster_2_celltype.ALL.orderByLevel3.rds"))
+```
+
+Cell types dominant in tumor
+
+```{r message=FALSE, warning=FALSE}
+df_tumor_celltypes <- read_csv(here::here("output/04.rm_cells", "seurat.cellmeta.csv")) %>% 
+  group_by(cellType3, Origin2_n) %>% 
+  summarise(n = n()) %>% 
+  mutate(percent = n/sum(n)*50) %>% 
+  filter(Origin2_n == "Tumor") %>% 
+  dplyr::select(cellType3, percentInTumor = percent) %>% 
+  mutate(
+    cellType3 = case_when(
+      cellType3 == "normal lymphatics" ~ "LEC-C1",
+      cellType3 == "tumor lymphatics" ~ "LEC-C2",
+      TRUE ~ cellType3
+    )
+  )
+
+# save
+df_tumor_celltypes %>% 
+  write_csv(here::here("output", DOCNAME, "celltype3_proportion_in_Tumor.csv"))
+
+tumor_celltypes <- df_tumor_celltypes %>% 
+  filter(percentInTumor >= 10) %>% 
+  pull(cellType3)
+```
+
+## Functions
+
+Common function
+
+```{r}
+neat_data <- function(tissue_origin = NULL, p_mat = NULL, t = NULL) {
+  # percent
+  d4p <- tissue_origin %>%
+    group_by(cellType3, NN_tissue) %>%
+    summarise(n = n()) %>%
+    mutate(Percent = n / sum(n) * 100) %>%
+    unite(ID, c("cellType3", "NN_tissue"), sep = ":")
+
+  # p value
+  df_p <- p_mat %>%
+    as.data.frame.matrix() %>%
+    rownames_to_column("cellType3") %>%
+    pivot_longer(
+      cols = -c("cellType3"),
+      values_to = "p"
+    ) %>%
+    unite(ID, c("cellType3", "name"), sep = ":") %>%
+    mutate(p.adj = p.adjust(p, method = "BH"))
+
+  # td-types
+  d4p %>%
+    left_join(df_p, by = "ID") %>%
+    separate(ID, c("cellType3", "NN_tissue"), sep = ":") %>% 
+    mutate(Tissue = t) %>% 
+    dplyr::select(Tissue, everything()) %>% 
+  mutate(
+    cellType3 = case_when(
+      cellType3 == "normal lymphatics" ~ "LEC-C1",
+      cellType3 == "tumor lymphatics" ~ "LEC-C2",
+      TRUE ~ cellType3
+    )
+  )
+}
+
+get_td_type <- function(df_in=NULL) {
+  df_in %>%
+    filter(NN_tissue == "Tumor", Percent >= 70, p.adj < 0.01)
+}
+```
+
+## All Td-types
+
+Get Td-type cells
+
+```{r}
+Origin2 <- c("prePBMC", "postPBMC", "nLN", "pLN", "Normal", "Adjacent", "Tumor")
+
+tdType_lst <- lapply(Origin2, function(t) {
+  p_mat <- readRDS(here::here("output", "exp_similarity.cross_tissue.Origin2", paste0(t, ".p_mat.rds")))
+  tissue_origin <- readRDS(here::here("output", "exp_similarity.cross_tissue.Origin2", paste0(t, ".tissue_origin.rds")))
+  get_td_type(neat_data(tissue_origin, p_mat, t)) %>%
+    pull(cellType3)
+})
+
+# Td-types
+td_types <- Reduce(union, tdType_lst)
+td_types <- df_c2c %>%
+  filter(level_3 %in% td_types) %>% 
+  filter(level_3 %in% tumor_celltypes) # dominant in Tumor (at least 10% from tumor)
+
+# save
+saveRDS(td_types, file = here::here("output", DOCNAME, "td_types.rds"))
+td_types %>% 
+  write_csv(here::here("output", DOCNAME, "td_types.csv"))
+
+td_types %>%
+  DT::datatable()
+```
+
+## where are DC cells?
+
+```{r}
+x = lapply(Origin2, function(t) {
+  p_mat <- readRDS(here::here("output", "exp_similarity.cross_tissue.Origin2", paste0(t, ".p_mat.rds")))
+  tissue_origin <- readRDS(here::here("output", "exp_similarity.cross_tissue.Origin2", paste0(t, ".tissue_origin.rds")))
+  neat_data(tissue_origin, p_mat, t) %>%
+    mutate(Tissue = t) %>%
+    dplyr::select(Tissue, everything())
+})
+
+do.call(rbind, x) %>%
+  filter(str_detect(cellType3, "pDC|tDC"),
+         NN_tissue == "Tumor") %>%
+  DT::datatable()
+```
+
+## Plot {.tabset}
+
+### 241029, all, without Epi
+
+```{r fig.width=8, fig.height=7}
+Origin2 <- c("prePBMC", "postPBMC", "nLN", "pLN", "Normal", "Adjacent", "Tumor")
+
+df_lst <- lapply(Origin2, function(t) {
+  p_mat <- readRDS(here::here("output", "exp_similarity.cross_tissue.Origin2", paste0(t, ".p_mat.rds")))
+  tissue_origin <- readRDS(here::here("output", "exp_similarity.cross_tissue.Origin2", paste0(t, ".tissue_origin.rds")))
+  neat_data(tissue_origin, p_mat, t)
+})
+
+# only plot the similarity to Tumor
+d4p <- do.call(rbind, df_lst) %>%
+  filter(NN_tissue == "Tumor") %>% 
+  left_join(df_tumor_celltypes, by = "cellType3") %>% 
+  filter(percentInTumor >= 10)
+
+# save
+d4p %>% 
+  write_csv(here::here("output", DOCNAME, "Fig.Td-type-identification.csv"))
+
+set.seed(2)
+d4p %>% 
+  filter(!str_starts(cellType3, "Epi")) %>% 
+  ggplot(aes(x = -log10(p.adj + 10^-4), y = Percent, color = Tissue)) +
+  geom_jitter(position = position_jitter(width = 0.1, height = 0.1),
+              size = 3) +
+  geom_hline(yintercept = 70, linetype = "dashed") +
+  geom_vline(xintercept = -log10(0.01), linetype = "dashed") +
+  scale_color_manual(values = origin2_color_maps) +
+  xlim(NA, 5) +
+  my_theme
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.Td-type-identification.pdf"),
+  width = 8, height = 7
+)
+```
+
+Label
+
+```{r fig.width=8, fig.height=7}
+d4p_label <- d4p %>%
+  filter(Percent >= 70, p.adj < 0.01)
+
+set.seed(2)
+d4p %>% 
+  filter(!str_starts(cellType3, "Epi")) %>% 
+  ggplot(aes(x = -log10(p.adj + 10^-4), y = Percent, color = Tissue)) +
+  geom_jitter(position = position_jitter(width = 0.2, height = 0.2),
+              size = 3) +
+  geom_hline(yintercept = 70, linetype = "dashed") +
+  geom_vline(xintercept = -log10(0.01), linetype = "dashed") +
+  geom_text_repel(
+    data = d4p_label, aes(x = -log10(p.adj + 10^-4), y = Percent, label = cellType3),
+    inherit.aes = FALSE,
+    max.overlaps = 100,
+    size = geom.text.size
+  ) +
+  scale_color_manual(values = origin2_color_maps) +
+  xlim(NA, 5) +
+  my_theme
+```
+
+
+
+
+### 241019, all
+
+without labels
+
+```{r fig.width=8, fig.height=7}
+Origin2 <- c("prePBMC", "postPBMC", "nLN", "pLN", "Normal", "Adjacent", "Tumor")
+
+df_lst <- lapply(Origin2, function(t) {
+  p_mat <- readRDS(here::here("output", "exp_similarity.cross_tissue.Origin2", paste0(t, ".p_mat.rds")))
+  tissue_origin <- readRDS(here::here("output", "exp_similarity.cross_tissue.Origin2", paste0(t, ".tissue_origin.rds")))
+  neat_data(tissue_origin, p_mat, t)
+})
+
+# only plot the similarity to Tumor
+d4p <- do.call(rbind, df_lst) %>%
+  filter(NN_tissue == "Tumor") %>% 
+  left_join(df_tumor_celltypes, by = "cellType3")
+
+# save
+d4p %>% 
+  write_csv(here::here("output", DOCNAME, "Fig.Td-type-identification.csv"))
+
+d4p %>% 
+  ggplot(aes(x = -log10(p.adj + 10^-4), y = Percent, color = Tissue)) +
+  geom_jitter(position = position_jitter(width = 0.2, height = 0.2),
+              size = 3) +
+  geom_hline(yintercept = 70, linetype = "dashed") +
+  geom_vline(xintercept = -log10(0.01), linetype = "dashed") +
+  scale_color_manual(values = origin2_color_maps) +
+  xlim(NA, 5) +
+  my_theme
+```
+
+with labels
+
+```{r fig.width=8, fig.height=7}
+d4p_label <- d4p %>%
+  filter(Percent >= 70, p.adj < 0.01)
+
+d4p %>% 
+  ggplot(aes(x = -log10(p.adj + 10^-4), y = Percent, color = Tissue)) +
+  geom_jitter(position = position_jitter(width = 0.2, height = 0.2)) +
+  geom_hline(yintercept = 70, linetype = "dashed") +
+  geom_vline(xintercept = -log10(0.01), linetype = "dashed") +
+  geom_text_repel(
+    data = d4p_label, aes(x = -log10(p.adj + 10^-4), y = Percent, label = cellType3),
+    inherit.aes = FALSE,
+    max.overlaps = 100,
+    size = geom.text.size
+  ) +
+  scale_color_manual(values = origin2_color_maps) +
+  xlim(NA, 5) +
+  my_theme
+```
+
+
+
+
+
+### pLN
+
+With epi
+
+```{r fig.width=5, fig.height=4}
+t <- "pLN"
+p_mat <- readRDS(here::here("output", "exp_similarity.cross_tissue.Origin2", paste0(t, ".p_mat.rds")))
+tissue_origin <- readRDS(here::here("output", "exp_similarity.cross_tissue.Origin2", paste0(t, ".tissue_origin.rds")))
+#tissue_origin <- tissue_origin[!str_detect(tissue_origin$NN_type, "Epi_"), ]
+
+# d4p
+d4p <- neat_data(tissue_origin, p_mat, t)
+
+# plot
+d4p_label <- get_td_type(d4p)
+
+d4p %>%
+  ggplot(aes(x = -log10(p.adj + 10^-4), y = Percent, color = NN_tissue)) +
+  geom_jitter(position = position_jitter(width = 0.2, height = 0.2)) +
+  geom_hline(yintercept = 70, linetype = "dashed") +
+  geom_vline(xintercept = -log10(0.01), linetype = "dashed") +
+  geom_text_repel(
+    data = d4p_label, aes(x = -log10(p.adj + 10^-4), y = Percent, label = cellType3),
+    inherit.aes = FALSE,
+    max.overlaps = 100,
+    size = geom.text.size
+  ) +
+  scale_color_manual(values = origin2_color_maps) +
+  xlim(NA, 5) +
+  my_theme
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.Td-type-with-epi.pLN.pdf"),
+  width = 5, height = 4
+)
+```
+
+Without epi
+
+```{r fig.width=5, fig.height=4}
+p_mat <- readRDS(here::here("output", "exp_similarity.cross_tissue.Origin2", paste0(t, ".p_mat.rds")))
+p_mat <- p_mat[!str_detect(rownames(p_mat), "Epi_"),]
+tissue_origin <- readRDS(here::here("output", "exp_similarity.cross_tissue.Origin2", paste0(t, ".tissue_origin.rds")))
+tissue_origin <- tissue_origin[!str_detect(tissue_origin$NN_type, "Epi_"), ]
+
+# d4p
+d4p <- neat_data(tissue_origin, p_mat, t)
+
+# plot
+d4p_label <- get_td_type(d4p)
+
+d4p %>%
+  ggplot(aes(x = -log10(p.adj + 10^-4), y = Percent, color = NN_tissue)) +
+  geom_jitter(position = position_jitter(width = 0.2, height = 0.2)) +
+  geom_hline(yintercept = 70, linetype = "dashed") +
+  geom_vline(xintercept = -log10(0.01), linetype = "dashed") +
+  geom_text_repel(
+    data = d4p_label, aes(x = -log10(p.adj + 10^-4), y = Percent, label = cellType3),
+    inherit.aes = FALSE,
+    max.overlaps = 100,
+    size = geom.text.size
+  ) +
+  scale_color_manual(values = origin2_color_maps) +
+  xlim(NA, 5) +
+  my_theme
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.Td-type-without-epi.pLN.pdf"),
+  width = 5, height = 4
+)
+```
+
+
+### nLN
+
+With epi
+
+```{r fig.width=5, fig.height=4}
+t <- "nLN"
+p_mat <- readRDS(here::here("output", "exp_similarity.cross_tissue.Origin2", paste0(t, ".p_mat.rds")))
+tissue_origin <- readRDS(here::here("output", "exp_similarity.cross_tissue.Origin2", paste0(t, ".tissue_origin.rds")))
+#tissue_origin <- tissue_origin[!str_detect(tissue_origin$NN_type, "Epi_"), ]
+
+# d4p
+d4p <- neat_data(tissue_origin, p_mat, t)
+
+# plot
+d4p_label <- get_td_type(d4p)
+
+d4p %>%
+  ggplot(aes(x = -log10(p.adj + 10^-4), y = Percent, color = NN_tissue)) +
+  geom_jitter(position = position_jitter(width = 0.2, height = 0.2)) +
+  geom_hline(yintercept = 70, linetype = "dashed") +
+  geom_vline(xintercept = -log10(0.01), linetype = "dashed") +
+  geom_text_repel(
+    data = d4p_label, aes(x = -log10(p.adj + 10^-4), y = Percent, label = cellType3),
+    inherit.aes = FALSE,
+    max.overlaps = 100,
+    size = geom.text.size
+  ) +
+  scale_color_manual(values = origin2_color_maps) +
+  xlim(NA, 5) +
+  my_theme
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.Td-type-with-epi.nLN.pdf"),
+  width = 5, height = 4
+)
+```
+
+Without epi
+
+```{r fig.width=5, fig.height=4}
+p_mat <- readRDS(here::here("output", "exp_similarity.cross_tissue.Origin2", paste0(t, ".p_mat.rds")))
+p_mat <- p_mat[!str_detect(rownames(p_mat), "Epi_"),]
+tissue_origin <- readRDS(here::here("output", "exp_similarity.cross_tissue.Origin2", paste0(t, ".tissue_origin.rds")))
+tissue_origin <- tissue_origin[!str_detect(tissue_origin$NN_type, "Epi_"), ]
+
+# d4p
+d4p <- neat_data(tissue_origin, p_mat, t)
+
+# plot
+d4p_label <- get_td_type(d4p)
+
+d4p %>%
+  ggplot(aes(x = -log10(p.adj + 10^-4), y = Percent, color = NN_tissue)) +
+  geom_jitter(position = position_jitter(width = 0.2, height = 0.2)) +
+  geom_hline(yintercept = 70, linetype = "dashed") +
+  geom_vline(xintercept = -log10(0.01), linetype = "dashed") +
+  geom_text_repel(
+    data = d4p_label, aes(x = -log10(p.adj + 10^-4), y = Percent, label = cellType3),
+    inherit.aes = FALSE,
+    max.overlaps = 100,
+    size = geom.text.size
+  ) +
+  scale_color_manual(values = origin2_color_maps) +
+  xlim(NA, 5) +
+  my_theme
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.Td-type-without-epi.nLN.pdf"),
+  width = 5, height = 4
+)
+```
+
+
+## Session info

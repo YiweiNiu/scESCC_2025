@@ -1,0 +1,326 @@
+---
+title: "00.Fig.SOX4.cd4"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "00.Fig.SOX4.cd4"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = FALSE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+
+# patch
+library(patchwork)
+library(cowplot)
+my_theme <- theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+)
+geom.text.size <- 6 / (14 / 5)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+
+# color
+library(ggsci)
+
+# Seurat
+library(Seurat)
+library(msigdbr)
+```
+
+Load code
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+Load rds
+
+```{r load-rds, cache=FALSE}
+srat <- readRDS(here::here("output/04.rm_cells/seurat_cd4_treg.rds"))
+Idents(srat) <- "level_3"
+srat
+```
+
+## SOX4 in subtypes
+
+with points
+
+```{r fig.width=3, fig.height=2}
+VlnPlot(srat, features = "SOX4", pt.size = 0.001) +
+  scale_fill_manual(values = t_level_3_color) +
+  labs(x = NULL, y = "Exp.") +
+  my_theme +
+  NoLegend() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.CD4-Treg_level3_SOX4_withDot.pdf"),
+  height = 2, width = 3, device = cairo_pdf
+)
+```
+
+without points
+
+```{r fig.width=3, fig.height=2}
+VlnPlot(srat, features = "SOX4", pt.size = 0) +
+  scale_fill_manual(values = t_level_3_color) +
+  labs(x = NULL, y = "Exp.") +
+  my_theme +
+  NoLegend() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.CD4-Treg_level3_SOX4.pdf"),
+  height = 2, width = 3, device = cairo_pdf
+)
+```
+
+## SOX4 in diff. Origin2_n
+
+SOX4 在 Treg 中在 origin2 不同位置的表达情况
+
+with dots
+
+```{r fig.width=2, fig.height=1.8}
+VlnPlot(subset(srat, subset = level_1 == "Treg"),
+              features = "SOX4", group.by = "Origin2_n", pt.size = 0.001) +
+  scale_fill_manual(values = origin2_color_maps) +
+  labs(x = NULL, y = "Exp.", title = "Treg") +
+  my_theme +
+  NoLegend() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.Treg_Origin2_SOX4_withDot.pdf"),
+  height = 1.8, width = 2, device = cairo_pdf
+)
+```
+
+without dots
+
+```{r fig.width=2, fig.height=1.8}
+VlnPlot(subset(srat, subset = level_1 == "Treg"),
+              features = "SOX4", group.by = "Origin2_n", pt.size = 0) +
+  scale_fill_manual(values = origin2_color_maps) +
+  labs(x = NULL, y = "Exp.", title = "Treg") +
+  my_theme +
+  NoLegend() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.Treg_Origin2_SOX4.pdf"),
+  height = 1.8, width = 2, device = cairo_pdf
+)
+```
+
+## Cor. with immunosuppression signatures
+
+Treg
+
+```{r fig.width=4, fig.height=3}
+srat_sub <- subset(srat, subset = level_1 == "Treg")
+
+gs_lst <- list(
+  # angiogenesis
+  angiogenesis = filter_features(srat_sub, c("CCL3", "VEGFA", "SND1", "MTDH", "ITGA5", "TNF", "CXCL3", "ANXA3", "HMGB1", "HIF1A", "SEMA4D", "LRG1", "CHIL1")),
+  # ECM remodeling
+  ECM_remodel = filter_features(srat_sub, c("ADAMDEC1", "CTSC", "CTSB", "RGCC", "CTSS", "CTSZ", "ADAM17", "ADAM10", "ADAM8", "CTSL", "CTSA", "CTSS", "LYZ", "MMP9", "MMP14")),
+  # pro-fibrotic signature
+  proFibrotic = filter_features(srat_sub, c("CCL22", "CSF1", "CHIT1", "FCMR", "SIGLEC15", "CTSK", "COL22A1", "CHI3L1", "SPP1", "SPARC", "MMP9", "MMP7", "GPC4", "TIMP3", "MATK", "LIPA", "PALLD", "FDX1", "LPL")),
+  # immunosuppression
+  immunosuppression = filter_features(srat_sub, c("HAVCR2", "FCGR2B", "IL4RA", "CD274", "HIF1A", "IL15"))
+)
+
+# get score
+srat_sub <- AddModuleScore(srat_sub, features = gs_lst)
+gs_score <- srat_sub@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  dplyr::select(barcode, starts_with("Cluster")) %>% 
+  column_to_rownames("barcode")
+colnames(gs_score) <- names(gs_lst)
+x <- FetchData(srat_sub, slot = "data", vars = "SOX4")
+
+# plot
+y <- cor(x$SOX4, gs_score)
+d4p <- as.data.frame(t(y)) %>% 
+  rownames_to_column("x") %>%
+  dplyr::rename(y = V1)
+
+d4p %>% 
+  ggplot(aes(x = reorder(x, -y), y = y)) +
+  geom_point(size = 3) +
+  geom_segment(aes(x=x, 
+                   xend=x, 
+                   y=0, 
+                   yend=y)) +
+  labs(x = NULL, y = "cor") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle=65, hjust=1))
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.Treg_SOX4_gs_cor.pdf"),
+  height = 3, width = 4, device = cairo_pdf
+)
+```
+
+All
+
+```{r fig.width=4, fig.height=3}
+srat_sub <- srat
+
+gs_lst <- list(
+  # angiogenesis
+  angiogenesis = filter_features(srat_sub, c("CCL3", "VEGFA", "SND1", "MTDH", "ITGA5", "TNF", "CXCL3", "ANXA3", "HMGB1", "HIF1A", "SEMA4D", "LRG1", "CHIL1")),
+  # ECM remodeling
+  ECM_remodel = filter_features(srat_sub, c("ADAMDEC1", "CTSC", "CTSB", "RGCC", "CTSS", "CTSZ", "ADAM17", "ADAM10", "ADAM8", "CTSL", "CTSA", "CTSS", "LYZ", "MMP9", "MMP14")),
+  # pro-fibrotic signature
+  proFibrotic = filter_features(srat_sub, c("CCL22", "CSF1", "CHIT1", "FCMR", "SIGLEC15", "CTSK", "COL22A1", "CHI3L1", "SPP1", "SPARC", "MMP9", "MMP7", "GPC4", "TIMP3", "MATK", "LIPA", "PALLD", "FDX1", "LPL")),
+  # immunosuppression
+  immunosuppression = filter_features(srat_sub, c("HAVCR2", "FCGR2B", "IL4RA", "CD274", "HIF1A", "IL15"))
+)
+
+# get score
+srat_sub <- AddModuleScore(srat_sub, features = gs_lst)
+gs_score <- srat_sub@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  dplyr::select(barcode, starts_with("Cluster")) %>% 
+  column_to_rownames("barcode")
+colnames(gs_score) <- names(gs_lst)
+x <- FetchData(srat_sub, slot = "data", vars = "SOX4")
+
+# plot
+y <- cor(x$SOX4, gs_score)
+d4p <- as.data.frame(t(y)) %>% 
+  rownames_to_column("x") %>%
+  dplyr::rename(y = V1)
+
+d4p %>% 
+  ggplot(aes(x = reorder(x, -y), y = y)) +
+  geom_point(size = 3) +
+  geom_segment(aes(x=x, 
+                   xend=x, 
+                   y=0, 
+                   yend=y)) +
+  labs(x = NULL, y = "cor") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle=65, hjust=1))
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.CD4_Treg_SOX4_gs_cor.pdf"),
+  height = 3, width = 4, device = cairo_pdf
+)
+```
+
+## Cor. with immunosuppression markers
+
+Treg
+
+```{r fig.width=3, fig.height=2.5}
+srat_sub <- subset(srat, subset = level_1 == "Treg")
+
+x <- FetchData(srat_sub, slot = "data", vars = "SOX4")
+y <- FetchData(srat_sub, slot = "data", vars = c("IL10", "IL12A", "TGFB1", "VEGFA", "CXCL13", "CXCL8", "HAVCR2", "LAG3", "CTLA4", "PDCD1", "TIGIT", "ENTPD1", "NT5E"))
+
+as.data.frame(t(cor(x, y))) %>% rownames_to_column() %>% 
+  dplyr::select(x = rowname, y = SOX4) %>% 
+  ggplot(aes(x = reorder(x, -y), y = y)) +
+  geom_point(size = 3) +
+  geom_segment(aes(x=x, 
+                   xend=x, 
+                   y=0, 
+                   yend=y)) +
+  labs(x = NULL, y = "cor") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle=65, hjust=1))
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.Treg_SOX4_exhaustionMarker_cor.pdf"),
+  width = 3, height = 2.5, device = cairo_pdf
+)
+```
+
+
+All
+
+```{r fig.width=3, fig.height=2.5}
+x <- FetchData(srat, slot = "data", vars = "SOX4")
+y <- FetchData(srat, slot = "data", vars = c("IL10", "IL12A", "TGFB1", "VEGFA", "CXCL13", "CXCL8", "HAVCR2", "LAG3", "CTLA4", "PDCD1", "TIGIT", "ENTPD1", "NT5E"))
+
+as.data.frame(t(cor(x, y))) %>% rownames_to_column() %>% 
+  dplyr::select(x = rowname, y = SOX4) %>% 
+  ggplot(aes(x = reorder(x, -y), y = y)) +
+  geom_point(size = 3) +
+  geom_segment(aes(x=x, 
+                   xend=x, 
+                   y=0, 
+                   yend=y)) +
+  labs(x = NULL, y = "cor") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle=65, hjust=1))
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.CD4_Treg_SOX4_exhaustionMarker_cor.pdf"),
+  width = 3, height = 2.5, device = cairo_pdf
+)
+```
+
+
+
+## Session info

@@ -1,0 +1,200 @@
+---
+title: "00.Fig.cellchat"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "00.Fig.cellchat"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = FALSE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+
+# patch
+library(patchwork)
+library(cowplot)
+theme_set(theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+))
+my_theme <- theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+)
+geom.text.size <- 6 / (14 / 5)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+
+# color
+library(ggsci)
+
+# cellchat
+library(CellChat)
+library(NMF)
+library(ggalluvial)
+
+# Seurat
+library(Seurat)
+
+options(stringsAsFactors = FALSE)
+```
+
+Load code
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+## Visually compare each pathway (cellType2)
+
+Load cellchat rds
+
+```{r load-rds, cache=FALSE, message=FALSE, warning=FALSE}
+origin2_n = c("PBMC1", "PBMC2", "LN_N", "LN_P", "Normal", "Adjacent", "Tumor")
+obj.lst = lapply(origin2_n, function(x){
+  a = readRDS(here::here("output/CellChat.byOrigin2", paste0("cellchat.", paste0(x, ".rds"))))
+  a = updateCellChat(a)
+  a = subsetCellChat(a, idents.use = c("Unknown"), invert = TRUE)
+  return(a)
+})
+names(obj.lst) = origin2_n
+```
+
+## plot
+
+```{r vis-each-pathway, fig.width=21, fig.height=3}
+pathway_to_show <- c("CD6", "ALCAM", "CCL", "SELL", "COLLAGEN")
+
+pdf(here::here("output", DOCNAME, "Fig.netVisual_aggregate.selected_pathways.pdf"), height = 3, width = 21)
+p_lst <- lapply(pathway_to_show, FUN = function(x){
+  weight.max <- getMaxWeight(obj.lst, slot.name = 'netP', attribute = x)
+  par(mfrow = c(1, 7), xpd=TRUE)
+  for (i in 1:length(obj.lst)) {
+    netVisual_aggregate(obj.lst[[i]], signaling = x, layout = 'circle',
+                        edge.weight.max = weight.max[1], edge.width.max = 10,
+                        signaling.name = paste(x, names(obj.lst)[i])
+                        )
+    }
+})
+invisible(dev.off())
+```
+
+## plot (test colors)
+
+```{r vis-each-pathway, fig.width=21, fig.height=3}
+pathway_to_show <- c("CD6", "ALCAM", "CCL", "SELL", "COLLAGEN")
+
+pdf(here::here("output", DOCNAME, "Fig.netVisual_aggregate.selected_pathways-2.pdf"), height = 3, width = 21)
+p_lst <- lapply(pathway_to_show, FUN = function(x){
+  weight.max <- getMaxWeight(obj.lst, slot.name = 'netP', attribute = x)
+  par(mfrow = c(1, 7), xpd=TRUE)
+  for (i in 1:length(obj.lst)) {
+    netVisual_aggregate(obj.lst[[i]], signaling = x, layout = 'circle',
+                        edge.weight.max = weight.max[1], edge.width.max = 10,
+                        signaling.name = paste(x, names(obj.lst)[i])
+                        )
+    }
+})
+invisible(dev.off())
+```
+
+
+## Compare the major sources and targets in 2D space (cellType3)
+
+```{r}
+origin2_n = c("PBMC1", "PBMC2", "LN_N", "LN_P", "Normal", "Adjacent", "Tumor")
+obj.lst = lapply(origin2_n, function(x){
+  a = readRDS(here::here(paste0("output/CellChat.byOrigin2.", paste0(x, ".cellType3/cellchat.rds"))))
+  a = updateCellChat(a)
+  #a = subsetCellChat(a, idents.use = c("Unknown"), invert = TRUE)
+  return(a)
+})
+names(obj.lst) = origin2_n
+```
+
+Comparing the outgoing and incoming interaction strength in 2D space allows ready identification of the cell populations with significant changes in sending or receiving signals between different datasets.
+
+```{r cmp-major-sour-target-in-2D, fig.width=12, fig.height=22, message=FALSE, warning=FALSE}
+num.link <- sapply(obj.lst, function(x) {rowSums(x@net$count) + colSums(x@net$count)-diag(x@net$count)})
+weight.MinMax <- c(min(unlist(num.link)), max(unlist(num.link))) # control the dot size in the different datasets
+gg <- list()
+for (i in 1:length(obj.lst)) {
+  gg[[i]] <- netAnalysis_signalingRole_scatter(obj.lst[[i]], title = names(obj.lst)[i], weight.MinMax = weight.MinMax) +
+  xlim(0, 210) +
+  ylim(0, 250)
+}
+#> Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+#> Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
+patchwork::wrap_plots(plots = gg, ncol = 2) +
+  plot_layout(guides = "collect")
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.netAnalysis_signalingRole_scatter.pdf"),
+  width = 12, height = 22
+)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+## Session info
+

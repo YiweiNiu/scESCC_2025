@@ -1,0 +1,250 @@
+---
+title: "monocle3.fib.par_2.pericyte-C1_C3_myCAF-C2"
+---
+
+Run on T01
+
+```{r knitr, include = FALSE}
+DOCNAME = "monocle3.fib.par_2.pericyte-C1_C3_myCAF-C2"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+    if (before) {
+        print(paste("Start:", Sys.time()))
+        NOW <<- Sys.time()
+    } else {
+        print(paste("Stop:", Sys.time()))
+        print(Sys.time() - NOW)
+    }
+})
+
+knitr::opts_chunk$set(
+    autodep        = TRUE,
+    cache          = FALSE,
+    cache.path     = paste0("cache/", DOCNAME, "/"),
+    cache.lazy     = FALSE, 
+    cache.comments = FALSE,
+    echo           = FALSE,
+    error          = FALSE,
+    fig.align      = "center",
+    fig.width      = 10,
+    fig.height     = 8,
+    message        = FALSE,
+    warning        = FALSE,
+    timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, warning=FALSE, message=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(ggcorrplot)
+library(pheatmap)
+library(ComplexHeatmap)
+library(circlize)
+library(ggpubr)
+library(ggplotify)
+library(ggrepel)
+
+# patch
+library(cowplot)
+theme_set(theme_cowplot(font_size = 10,
+                        rel_small = 10/10,
+                        rel_tiny = 8/10,
+                        rel_large = 10/10,
+                        font_family = "Arial"))
+library(patchwork)
+
+# color
+library(ggsci)
+
+# Seurat
+library(Seurat)
+
+# monocle
+library(SeuratWrappers)
+library(monocle3)
+```
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+Load rds (save time)
+
+```{r load-rds, cache=FALSE}
+cds_sub = readRDS(here::here("output", DOCNAME, "cds_sub.rds"))
+cds_sub
+```
+
+## monocle3
+
+Subset pericyte-C1, pericyte-C3, myCAF-C2
+
+```{r eval=FALSE}
+cds = readRDS(here::here('output/04.rm_cells/monocle3_fibroblasts.par_2.rds'))
+cds
+
+cds_sub = cds[,colData(cds) %>%
+  as.data.frame() %>%
+  filter(level_3 %in% c("pericyte-C1", "pericyte-C3", "myCAF-C2")) %>% #head()
+  row.names]
+
+saveRDS(cds_sub, file = here::here("output", DOCNAME, "cds_sub.rds"))
+```
+
+Get genes significantly vary as a function of time
+
+```{r eval=FALSE}
+ciliated_cds_pr_test_res <- graph_test(cds_sub, neighbor_graph="principal_graph", cores=4)
+ciliated_cds_pr_test_res = ciliated_cds_pr_test_res %>%
+    arrange(-morans_I)
+saveRDS(ciliated_cds_pr_test_res, file = here::here("output", DOCNAME, "ciliated_cds_pr_test_res.rds"))
+
+ciliated_cds_pr_test_res %>%
+  rownames_to_column("gene") %>% 
+  write_tsv(here::here("output", DOCNAME, 'monocle3.fib.par_2.pericyte-C1_C3_myCAF-C2.graph_test.tsv'))
+```
+
+## Genes
+
+Show
+
+```{r}
+ciliated_cds_pr_test_res = readRDS(here::here("output", DOCNAME, "ciliated_cds_pr_test_res.rds"))
+
+pr_graph_test_res = subset(ciliated_cds_pr_test_res, q_value < 0.01 & morans_I > 0.2)
+pr_deg_ids <- row.names(pr_graph_test_res)
+DT::datatable(pr_graph_test_res, filter = "top")
+```
+
+Plot genes (top 100) along pseudotime
+
+```{r plot-genes-pseudotime, fig.width=7, fig.height=10}
+pt.matrix <- exprs(cds_sub)[match(pr_deg_ids[1:100], rownames(rowData(cds_sub))), order(pseudotime(cds_sub))]
+#Can also use "normalized_counts" instead of "exprs" to use various normalization methods, for example:
+#normalized_counts(cds, norm_method = "log")
+
+pt.matrix <- t(apply(pt.matrix,1,function(x){smooth.spline(x,df=3)$y}))
+pt.matrix <- t(apply(pt.matrix,1,function(x){(x-mean(x))/sd(x)}))
+rownames(pt.matrix) <- pr_deg_ids[1:100]
+
+pt.matrix = na.omit(pt.matrix)
+#Ward.D2 Hierarchical Clustering
+hthc <- Heatmap(
+  pt.matrix,
+  name                         = "z-score",
+  col                          = colorRamp2(seq(from=-2,to=2,length=11),
+                                            rev(brewer.pal(11, "Spectral"))),
+  show_row_names               = TRUE,
+  show_column_names            = FALSE,
+  row_names_gp                 = gpar(fontsize = 8),
+  row_title_rot                = 0,
+  cluster_rows                 = TRUE,
+  clustering_method_rows       = "ward.D2",
+  cluster_row_slices           = FALSE,
+  cluster_columns              = FALSE,
+  row_km = 2)
+draw(hthc)
+```
+
+
+## Plot selected
+
+Genes selected by Zhang
+
+```{r}
+pt.matrix <- exprs(cds_sub)[match(pr_deg_ids, rownames(rowData(cds_sub))), order(pseudotime(cds_sub))]
+#Can also use "normalized_counts" instead of "exprs" to use various normalization methods, for example:
+#normalized_counts(cds, norm_method = "log")
+
+pt.matrix <- t(apply(pt.matrix,1,function(x){smooth.spline(x,df=3)$y}))
+pt.matrix <- t(apply(pt.matrix,1,function(x){(x-mean(x))/sd(x)}))
+rownames(pt.matrix) <- pr_deg_ids
+
+x = pseudotime(cds_sub)
+cells = names(x)[order(x)]
+colnames(pt.matrix) = cells
+
+pt.matrix = na.omit(pt.matrix)
+pt.matrix[1:3, 1:3]
+```
+
+sort
+
+```{r}
+# order
+a = order(apply(pt.matrix, 1, FUN = function(i){
+  which(i == max(i))
+}))
+pt.matrix = pt.matrix[a, ]
+pt.matrix[1:3, 1:3]
+```
+
+anno
+
+```{r}
+anno = as.data.frame(colData(cds_sub)[colnames(pt.matrix), c("Origin4", "level_3")])
+anno = droplevels(anno)
+head(anno)
+```
+
+heatmap row anno
+
+```{r}
+gene_selected = c("SPARC", "PLOD2", "TPM2", "SULF1", "THBS2", "VCAN", "CD99", "FAP", "GJA1", "FN1", "BGN", "IFI6", "LY6E", "SOD2", "CTSB", "CTSK", "PDPN", "ANTXR1", "PDGFRL", "ISG15", "YBX1", "CD36", "IGFBP7", "CXCL2", "FABP4", "ADAMTS4", "CAV1", "RGS5", "GJA4", "SPARCL1", "CDKN1A", "IL6", "MTHFD2")
+
+# marker
+marker_2_lab = intersect(gene_selected, pr_deg_ids)
+# location
+marker_2_lab = sapply(marker_2_lab, function(x){which(rownames(pt.matrix) == x)}, simplify = T)
+ha = rowAnnotation(foo = anno_mark(at = marker_2_lab,
+                                   labels = names(marker_2_lab),
+                                   labels_gp = gpar(fontsize = 6)))
+```
+
+heatmap col anno
+
+```{r}
+col_ha = HeatmapAnnotation(
+  df = anno,
+  annotation_name_gp = gpar(fontsize = 6),
+  col = list(
+      Origin4 = origin4_color_maps[levels(anno$Origin4)],
+      level_3 = fib_level_3_color[levels(anno$level_3)]
+    )
+)
+```
+
+plot
+
+```{r fig.width=6, fig.height=6}
+hthc <- Heatmap(
+  pt.matrix,
+  name                         = "z-score",
+  col                          = colorRamp2(seq(from=-2,to=2, length=11),
+                                            rev(brewer.pal(11, "Spectral"))),
+  show_row_names               = FALSE,
+  show_column_names            = FALSE,
+  right_annotation = ha,
+  top_annotation = col_ha,
+  row_names_gp                 = gpar(fontsize = 8),
+  row_title_rot                = 0,
+  cluster_rows                 = FALSE,
+  clustering_method_rows       = "ward.D2",
+  cluster_row_slices           = FALSE,
+  cluster_columns              = FALSE)
+draw(hthc)
+```
+
+## Session info

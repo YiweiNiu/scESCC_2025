@@ -1,0 +1,332 @@
+---
+title: "00.Fig.SOX4.cd8"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "00.Fig.SOX4.cd8"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = FALSE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+
+# patch
+library(patchwork)
+library(cowplot)
+my_theme <- theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+)
+geom.text.size <- 6 / (14 / 5)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+
+# color
+library(ggsci)
+
+# Seurat
+library(Seurat)
+library(msigdbr)
+
+# anno
+library(org.Hs.eg.db)
+```
+
+Load code
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+Load rds
+
+```{r load-rds, cache=FALSE}
+srat <- readRDS(here::here("output/04.rm_cells/seurat_cd8.rds"))
+Idents(srat) <- "level_3"
+srat
+```
+
+## SOX4 in subtypes
+
+with points
+
+```{r fig.width=3, fig.height=2}
+VlnPlot(srat, features = "SOX4", pt.size = 0.001) +
+  scale_fill_manual(values = t_level_3_color) +
+  labs(x = NULL, y = "Exp.") +
+  my_theme +
+  NoLegend() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.CD8_level3_SOX4_withDot.pdf"),
+  height = 2, width = 3, device = cairo_pdf
+)
+```
+
+without points
+
+```{r fig.width=3, fig.height=2}
+VlnPlot(srat, features = "SOX4", pt.size = 0) +
+  scale_fill_manual(values = t_level_3_color) +
+  labs(x = NULL, y = "Exp.") +
+  my_theme +
+  NoLegend() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.CD8_level3_SOX4.pdf"),
+  height = 2, width = 3, device = cairo_pdf
+)
+```
+
+## SOX4 in diff. Origin2_n
+
+SOX4 在 Tex 中在 origin2 不同位置的表达情况
+
+with dots
+
+```{r fig.width=2, fig.height=1.8}
+VlnPlot(subset(srat, subset = level_2 == "Tex"),
+              features = "SOX4", group.by = "Origin2_n", pt.size = 0.001) +
+  scale_fill_manual(values = origin2_color_maps) +
+  labs(x = NULL, y = "Exp.", title = "Tex") +
+  my_theme +
+  NoLegend() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.CD8-Tex_Origin2_SOX4_withDot.pdf"),
+  height = 1.8, width = 2, device = cairo_pdf
+)
+```
+
+without dots
+
+```{r fig.width=2, fig.height=1.8}
+VlnPlot(subset(srat, subset = level_2 == "Tex"),
+              features = "SOX4", group.by = "Origin2_n", pt.size = 0) +
+  scale_fill_manual(values = origin2_color_maps) +
+  labs(x = NULL, y = "Exp.", title = "Tex") +
+  my_theme +
+  NoLegend() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.CD8-Tex_Origin2_SOX4.pdf"),
+  height = 1.8, width = 2, device = cairo_pdf
+)
+```
+
+## Cor. with selected signatures
+
+```{r fig.width=4, fig.height=3}
+srat_sub <- srat
+
+gs_lst <- list(
+  # hypoxia
+  Hypoxia = filter_features(srat, c("AL2", "ALDOA", "AM", "BCL2", "BCL2L1", "FOS", "JUN", "SRC", "CBP", "CCR6", "CEBPB", "ENOLAS", "FAS", "FASLG", "FKBP52", "GAPDH", "GLUT1", "GLUT3", "CSF2", "IFNG", "IFNB1", "IL13", "IL1R1", "IL2RA", "IL4", "IL5", "IL6R", "IL8", "IL10R", "IL15R", "ITGA6", "ITK", "JUN D", "CLB54", "MAP3K5", "MAP2K1", "MAP2K2", "MIF", "NFATC1", "NFKB2", "NFKBIE", "P53", "TGM6", "TNF", "TNFRSF1B", "TRADD", "TRAIL", "TRAP1", "VEGF")),
+  # Pro inflammatory
+  Proinflammatory = filter_features(srat, c("IL1A", "IL1B", "IFNG", "TBX21", "CCL3", "CCL4", "PRF1", "GZMA", "GZMB", "GZMK", "GZMH", "CD8A", "FASLG", "CCL2", "CCL20", "IL2", "IL6", "IL12A", "IL17A", "IL23A", "PTGS2", "TLR4")),
+  # Anti-inflammatory
+  Antiinflammatory = filter_features(srat, c("TIGIT", "IDO1", "LGALS3", "PDCD1", "FOXP3", "ENTPD1", "CD274", "CSF2", "CTLA4", "CXCL12", "CXCL5", "IL8", "MIF", "PTGS2", "VEGFA")),
+  # type I interferon response
+  Type1_interferon = filter_features(srat, c("IRF1", "IFIH1", "IFITM3", "DDX58", "IFI44L", "IFI6", "IFITM2", "NAMPT", "OASL", "RTP4", "TREX1", "ADAR", "FAM46C", "LY6E", "MCOLN2", "APOBEC3G", "IL15", "ISG15", "MX1", "TLR3")),
+  # Type II interferon response
+  Type2_interferon = filter_features(srat, c("IFNG", "CXCL9", "CXCL10", "STAT1", "CD274", "P21", "MYC", "SMAD7", "IRF1")),
+  # CD8 T activation
+  CD8_acti = filter_features(srat, c("CD69", "CCR7", "CD27", "BTLA", "CD40LG", "IL2RA", "CD3E", "CD47", "EOMES", "GNLY", "GZMA", "GZMB", "PRF1", "IFNG", "CD8A", "CD8B", "CD95L", "LAMP1", "LAG3", "CTLA4", "HLA-DRA", "TNFRSF4", "ICOS", "TNFRSF9", "TNFRSF18")),
+  # Cytolytics effector pathway
+  Cytolytics_effector = filter_features(srat, c("EOMES", "TBX21", "GZMB", "PRF1", "FASL", "GZMH", "GZMA")),
+  # anergy
+  Anergy = filter_features(srat, c("EGR3", "NR4A3", "EGR1", "NR4A2", "EGR2", "TNFSF11", "IRF4", "GCH1", "GADD45B", "NFATC1", "JARID2", "SLC29A3", "HLF", "ZFP36L1", "RNF19A", "ADORA2B", "CCRN41", "DUSP6", "NDRG1", "ADORA2A", "HSPA1A", "PFKP", "FYN", "CTSE", "ZFP629", "F2R", "RNF128", "LAG3", "RGS16", "E2F1", "E2F2")),
+  # TCell Terminal Differentiation
+  Terminal_diff = filter_features(srat, c("TIGIT", "PDCD1", "CD274", "CTLA4", "LAG3", "HAVCR2", "CD244", "CD160")),
+  # Bystander
+  bystander = filter_features(srat, c("ENTPD1", "ITGAE", "KLRK1", "PECAM1", "NCR3", "KLRG1", "TLR2", "TLR4", "TLR7", "TLR9"))
+)
+
+# get score
+srat_sub <- AddModuleScore(srat_sub, features = gs_lst)
+gs_score <- srat_sub@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  dplyr::select(barcode, starts_with("Cluster")) %>% 
+  column_to_rownames("barcode")
+colnames(gs_score) <- names(gs_lst)
+x <- FetchData(srat_sub, slot = "data", vars = "SOX4")
+
+# plot
+y <- cor(x$SOX4, gs_score)
+d4p <- as.data.frame(t(y)) %>% 
+  rownames_to_column("x") %>%
+  dplyr::rename(y = V1)
+
+d4p %>% 
+  ggplot(aes(x = reorder(x, -y), y = y)) +
+  geom_point(size = 3) +
+  geom_segment(aes(x=x, 
+                   xend=x, 
+                   y=0, 
+                   yend=y)) +
+  labs(x = NULL, y = "cor") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle=65, hjust=1))
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.CD8_SOX4_gs_cor.pdf"),
+  height = 3, width = 4, device = cairo_pdf
+)
+```
+
+## Cor. with exhaustion markers
+
+```{r fig.width=3, fig.height=2.5}
+x <- FetchData(srat, slot = "data", vars = "SOX4")
+y <- FetchData(srat, slot = "data", vars = c("PDCD1", "CTLA4", "HAVCR2", "LAG3", "TIGIT", "ENTPD1", "DUSP4", "CXCL13", "CXCL8"))
+
+as.data.frame(t(cor(x, y))) %>% rownames_to_column() %>% 
+  dplyr::select(x = rowname, y = SOX4) %>% 
+  ggplot(aes(x = reorder(x, -y), y = y)) +
+  geom_point(size = 3) +
+  geom_segment(aes(x=x, 
+                   xend=x, 
+                   y=0, 
+                   yend=y)) +
+  labs(x = NULL, y = "cor") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle=65, hjust=1))
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.CD8_SOX4_exhaustionMarker_cor.pdf"),
+  width = 3, height = 2.5, device = cairo_pdf
+)
+```
+
+
+## Cor with all KEGG
+
+Get all pathways
+
+```{r}
+library(limma)
+tab <- getGeneKEGGLinks(species="hsa") %>% 
+  mutate(PathwayID = str_remove(PathwayID, "path:"))
+tab$Symbol <- AnnotationDbi::mapIds(org.Hs.eg.db, tab$GeneID,
+                       column="SYMBOL", keytype="ENTREZID")
+hsa_pathways <- KEGGREST::keggList("pathway", "hsa") %>% 
+    tibble(pathway = names(.), description = .) %>% 
+  mutate(description = str_remove(description, " - Homo sapiens [(]human[])]"))
+
+gs_lst <- split(tab$Symbol, tab$PathwayID)
+# get score
+srat <- AddModuleScore(srat, features = gs_lst, name = "KEGG", search = TRUE)
+gs_score <- srat@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  dplyr::select(barcode, starts_with("KEGG")) %>% 
+  column_to_rownames("barcode")
+colnames(gs_score) <- names(gs_lst)
+x <- FetchData(srat, slot = "data", vars = "SOX4")
+
+# plot
+y <- cor(x$SOX4, gs_score)
+
+df <- as.data.frame(t(y)) %>% 
+  rownames_to_column("x") %>%
+  dplyr::rename(pathway = x, R = V1) %>% 
+  left_join(hsa_pathways, by = "pathway")
+
+top10 <- df %>% 
+  arrange(-R) %>% 
+  top_n(10, wt = R)
+bottom10 <- df %>% 
+  arrange(R) %>%
+  top_n(10, wt = -R)
+
+rbind(top10, bottom10) %>% 
+  ggplot(aes(x = reorder(description, -R), y = R)) +
+  geom_point(size = 3) +
+  geom_segment(aes(x=description, 
+                   xend=description, 
+                   y=0, 
+                   yend=R)) +
+  labs(x = NULL, y = "cor") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle=65, hjust=1))
+```
+
+
+
+## Cor with all GO:BP
+
+Get all GO:BP
+
+```{r}
+bp_gene_sets = msigdbr::msigdbr(species = "human", category = "C5", subcategory = "GO:BP")
+
+gs_lst <- lapply(split(tab$Symbol, tab$PathwayID), function(i){
+  filter_features(srat, i)
+})
+```
+
+
+
+
+
+
+
+## Session info
+

@@ -1,0 +1,340 @@
+---
+title: "infercnv.byPatient.byMalignant"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "infercnv.byPatient.byMalignant"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = TRUE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Set up
+
+Load packages.
+
+```{r library}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(ggcorrplot)
+library(cowplot)
+theme_set(theme_cowplot())
+library(patchwork)
+library(pheatmap)
+library(ComplexHeatmap)
+library(ggpubr)
+
+# dendrogram
+library(phylogram) # read tree
+require(dendextend) # plot tree
+
+# color
+library(ggsci)
+
+# Seurat
+library(Seurat)
+
+# infercnv
+dyn.load("/usr/local/lib/libjags.so.4")
+library(infercnv)
+```
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+## Load data
+
+Load cell meta
+
+```{r load-cell-meta, message=FALSE, warning=FALSE}
+cell_meta <- read_csv(here::here("output", "04.rm_cells/seurat_epithelia.cellmeta.csv")) %>%
+  dplyr::select(barcode, Origin4)
+```
+
+## Function
+
+```{r}
+plotCNV_complex <- function(patient = NULL,
+                            run = NULL,
+                            cell_meta = NULL) {
+  require(ComplexHeatmap)
+
+  # infercnv obj
+  infercnv_out_dir <- file.path("output", paste0("infercnv.", patient), run)
+  infercnv_obj <- readRDS(here::here(infercnv_out_dir, "run.final.infercnv_obj"))
+  trees <- list(
+    Endo = read.dendrogram(file = here::here(
+      infercnv_out_dir, "per_group", "infercnv_per_group_REF_Endothelia.observations_dendrogram.txt"
+    )),
+    Fib = read.dendrogram(file = here::here(
+      infercnv_out_dir, "per_group", "infercnv_per_group_REF_Fibroblasts.observations_dendrogram.txt"
+    )),
+    NonMalig. = read.dendrogram(file = here::here(
+      infercnv_out_dir, "per_group", "infercnv_per_group_OBS_NonMalig..observations_dendrogram.txt"
+    )),
+    PreMalig. = read.dendrogram(file = here::here(
+      infercnv_out_dir, "per_group", "infercnv_per_group_OBS_PreMalig..observations_dendrogram.txt"
+    )),
+    Malig. = read.dendrogram(file = here::here(
+      infercnv_out_dir, "per_group", "infercnv_per_group_OBS_Malig..observations_dendrogram.txt"
+    ))
+  )
+  # cell info
+  row_anno <- read_tsv(here::here(infercnv_out_dir, "groupFile.txt"), col_names = FALSE) %>%
+    dplyr::rename(barcode = X1, cell = X2) %>%
+    left_join(cell_meta, by = "barcode") %>%
+    mutate(Origin4 = case_when(
+      is.na(Origin4) ~ "Normal",
+      TRUE ~ Origin4
+    )) %>%
+    column_to_rownames("barcode") %>%
+    mutate(
+      Origin4 = factor(Origin4, levels = c(
+        "prePBMC", "postPBMC", "nLN", "m_nLN", "m_pLN",
+        "Normal", "Adjacent", "Tumor"
+      )),
+      cell = factor(cell, levels = c("Endothelia", "Fibroblasts", "NonMalig.", "PreMalig.", "Malig."))
+    )
+
+  # mat for plot
+  expr <- infercnv_obj@expr.data
+  mat_lst <- lapply(trees, function(x) {
+    expr[, labels(x)]
+  })
+  mat_4_p <- do.call(cbind, mat_lst)
+  mat_4_p <- t(mat_4_p)
+  # 0.7 - 1.3
+  mat_4_p[mat_4_p < 0.7] <- 0.7
+  mat_4_p[mat_4_p > 1.3] <- 1.3
+  # color
+  x <- max(mat_4_p)
+  y <- min(mat_4_p)
+  col_fun <- circlize::colorRamp2(c(y, 1, x), c("#00008B", "white", "#8B0000"))
+
+  # column anno
+  gp <- infercnv_obj@gene_order
+  column_ha <- HeatmapAnnotation(
+    chr = gp$chr,
+    col = list(chr = setNames(
+      ggsci::pal_ucscgb()(nlevels(gp$chr)),
+      levels(gp$chr)
+    )),
+    show_legend = F,
+    show_annotation_name = F
+  )
+
+  # row split
+  cell_num <- sapply(mat_lst, function(x) {
+    dim(x)[2]
+  })
+  row_split <- factor(
+    rep(c("ref", "obs"), c(sum(cell_num[1:2]), sum(cell_num[3:5]))),
+    levels = c("ref", "obs")
+  )
+
+  # row anno
+  row_anno <- row_anno[rownames(mat_4_p), ]
+  row_ha <- rowAnnotation(
+    df = row_anno,
+    annotation_name_gp = gpar(fontsize = 10),
+    col = list(
+      Origin4 = c(
+        "prePBMC" = "#023fa5", "postPBMC" = "#7d87b9",
+        "nLN" = "#bb7784", "m_nLN" = "#ff7f03",
+        "m_pLN" = "#EFC000FF", "Normal" = "#7AA6DCFF",
+        "Adjacent" = "#868686FF", "Tumor" = "#CD534CFF"
+      ),
+      cell = c(
+        "Endothelia" = "#D2AF81FF", "Fibroblasts" = "#FD7446FF",
+        "NonMalig." = "#7AA6DCFF", "PreMalig." = "#374E55FF",
+        "Malig." = "#E64B35FF"
+      )
+    ),
+    annotation_legend_param = list(
+      Origin4 = list(
+        nrow = 4
+      )
+    )
+  )
+
+  # plot
+  ht_list <- Heatmap(mat_4_p,
+    col = col_fun,
+    # not cluster columns and rows
+    cluster_rows = FALSE, cluster_columns = FALSE,
+    # name for color bar
+    name = "ht1",
+    # column names and row names
+    show_row_names = FALSE, show_column_names = FALSE,
+    row_names_gp = gpar(fontsize = 10),
+    column_names_gp = gpar(fontsize = 10),
+    # column title and row title
+    row_title_gp = gpar(fontsize = 10),
+    column_title_gp = gpar(fontsize = 10),
+    column_title = "Genomic region",
+    column_title_side = "bottom",
+    # column annotation
+    bottom_annotation = column_ha,
+    # row annotation
+    left_annotation = row_ha,
+    # row split
+    row_split = row_split,
+    row_gap = unit(2, "mm"),
+    # legend
+    heatmap_legend_param = list(
+      direction = "horizontal",
+      labels_gp = gpar(fontsize = 10),
+      title_gp = gpar(fontsize = 10),
+      grid_height = unit(3, "mm"),
+      grid_width = unit(3, "mm")
+    ),
+    # raster
+    use_raster = TRUE,
+    raster_quality = 5
+  )
+  draw(ht_list,
+    heatmap_legend_side = "bottom",
+    annotation_legend_side = "bottom"
+  )
+  # add vertical line decoration
+  tot_gene <- ncol(mat_4_p)
+  agg_c <- 0
+  decorate_heatmap_body("ht1",
+    {
+      for (i in table(gp$chr)) {
+        grid.lines(c(agg_c / tot_gene, agg_c / tot_gene), c(0, 1), gp = gpar(lty = 2, lwd = 1))
+        agg_c <- agg_c + i
+      }
+      # grid.lines(c(0.5, 0.5), c(0, 1), gp = gpar(lty = 2, lwd = 2))
+    },
+    slice = 2
+  )
+  # add horizontal line decoration
+  decorate_heatmap_body("ht1", {
+    grid.lines(c(0, 1), c(1 - cell_num[1] / sum(cell_num[1:2]), 1 - cell_num[1] / sum(cell_num[1:2])), gp = gpar(lty = 1, lwd = 1))
+  })
+  decorate_heatmap_body("ht1",
+    {
+      grid.lines(c(0, 1), c(1 - cell_num[3] / sum(cell_num[3:5]), 1 - cell_num[3] / sum(cell_num[3:5])), gp = gpar(lty = 1, lwd = 1))
+    },
+    slice = 2
+  )
+  decorate_heatmap_body("ht1",
+    {
+      grid.lines(c(0, 1), c(1 - sum(cell_num[3:4]) / sum(cell_num[3:5]), 1 - sum(cell_num[3:4]) / sum(cell_num[3:5])), gp = gpar(lty = 1, lwd = 1))
+    },
+    slice = 2
+  )
+}
+```
+
+## S0619
+
+Plot
+
+```{r S0619, fig.width=12, fig.height=8}
+patient <- "S0619"
+run <- "byMalignant_221122"
+
+plotCNV_complex(patient = patient, run = run, cell_meta = cell_meta)
+#p = plot_grid(grid.grabExpr(plotCNV_complex(patient = patient, run = run, cell_meta = cell_meta)))
+#p
+```
+
+## S0730
+
+Plot
+
+```{r S0730, fig.width=12, fig.height=8}
+patient <- "S0730"
+run <- "byMalignant_221122"
+
+plotCNV_complex(patient = patient, run = run, cell_meta = cell_meta)
+#p = plot_grid(grid.grabExpr(plotCNV_complex(patient = patient, run = run, cell_meta = cell_meta)))
+#p
+```
+
+## S0819
+
+Plot
+
+```{r S0819, fig.width=12, fig.height=8}
+patient <- "S0819"
+run <- "byMalignant_221122"
+
+plotCNV_complex(patient = patient, run = run, cell_meta = cell_meta)
+#p = plot_grid(grid.grabExpr(plotCNV_complex(patient = patient, run = run, cell_meta = cell_meta)))
+#p
+```
+
+## S0920
+
+Plot
+
+```{r S0920, fig.width=12, fig.height=8, eval=FALSE}
+patient <- "S0920"
+run <- "byMalignant_221122"
+
+plotCNV_complex(patient = patient, run = run, cell_meta = cell_meta)
+#p = plot_grid(grid.grabExpr(plotCNV_complex(patient = patient, run = run, cell_meta = cell_meta)))
+#p
+```
+
+## S1125
+
+Plot
+
+```{r S1125, fig.width=12, fig.height=8}
+patient <- "S1125"
+run <- "byMalignant_221122"
+
+plotCNV_complex(patient = patient, run = run, cell_meta = cell_meta)
+#p = plot_grid(grid.grabExpr(plotCNV_complex(patient = patient, run = run, cell_meta = cell_meta)))
+#p
+```
+
+## S1204
+
+Plot
+
+```{r S1204, fig.width=12, fig.height=8, eval=FALSE}
+patient <- "S1204"
+run <- "byMalignant_221122"
+
+plotCNV_complex(patient = patient, run = run, cell_meta = cell_meta)
+#p = plot_grid(grid.grabExpr(plotCNV_complex(patient = patient, run = run, cell_meta = cell_meta)))
+#p
+```
+
+## Session info
+

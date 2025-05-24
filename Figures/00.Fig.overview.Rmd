@@ -1,0 +1,749 @@
+---
+title: "00.Fig.overview"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "00.Fig.overview"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = FALSE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+
+# patch
+library(patchwork)
+library(cowplot)
+my_theme <- theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+)
+geom.text.size <- 6 / (14 / 5)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+
+# color
+library(ggsci)
+
+# Seurat
+library(Seurat)
+
+# vis
+# library(scRNAtoolVis)
+```
+
+Load code
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+Load rds
+
+```{r load-rds, cache=FALSE}
+srat <- readRDS(here::here("output/04.rm_cells/seurat.rds"))
+srat
+```
+
+## UMAP {.tabset}
+
+### cell type
+
+```{r fig.width=2, fig.height=2}
+p.umap.cellType <- DimPlot(srat,
+  reduction = "umap", group.by = "cellType",
+  label = TRUE, label.size = geom.text.size, raster = TRUE
+) +
+  scale_color_manual(values = cell_color_maps) +
+  labs(title = NULL) +
+  my_theme +
+  theme(
+    legend.position = "none",
+    plot.margin = margin(rep(0, 4), unit = "cm")
+  )
+p.umap.cellType
+
+# saveRDS(p.umap.cellType, file = here::here("output", DOCNAME, "Fig.umap.cellType.rds"))
+ggsave2(p.umap.cellType,
+  filename = here::here("output", DOCNAME, "Fig.umap.cellType.pdf"),
+  height = 2, width = 2, device = cairo_pdf
+)
+```
+
+### Origin4
+
+```{r fig.width=2.6, fig.height=2}
+p.umap.origin4 <- DimPlot(srat,
+  reduction = "umap", group.by = "Origin4",
+  raster = TRUE
+) +
+  scale_color_manual(values = origin4_color_maps) +
+  labs(title = NULL) +
+  my_theme
+p.umap.origin4
+
+# saveRDS(p.umap.origin4, file = here::here("output", DOCNAME, "Fig.umap.Origin4.rds"))
+ggsave2(p.umap.origin4,
+  filename = here::here("output", DOCNAME, "Fig.umap.Origin4.pdf"),
+  height = 2.6, width = 2, device = cairo_pdf
+)
+```
+
+Split
+
+```{r fig.width=7.5, fig.height=1.2}
+p.umap.splitByOrigin4 <- DimPlot(srat,
+  reduction = "umap",
+  split.by = "Origin4", ncol = 8,
+  raster = TRUE
+) +
+  scale_color_manual(values = cell_color_maps) +
+  my_theme +
+  NoAxes() +
+  theme(
+    legend.margin = margin(rep(0, 4), unit = "cm"),
+    legend.spacing.y = unit(0, "cm"),
+    legend.key.height = unit(.4, "cm"),
+    legend.box.margin = margin(rep(-.2, 4), unit = "cm"),
+    plot.margin = margin(rep(0, 4), unit = "cm"),
+    strip.background = element_rect(fill = "#f3f2f1")
+  )
+p.umap.splitByOrigin4
+
+# saveRDS(p.umap.splitByOrigin4, file = here::here("output", DOCNAME, "Fig.umap.splitByOrigin4.rds"))
+ggsave2(p.umap.splitByOrigin4,
+  filename = here::here("output", DOCNAME, "Fig.umap.splitByOrigin4.pdf"),
+  height = 1.2, width = 7.5, device = cairo_pdf
+)
+```
+
+### Origin
+
+```{r fig.width=3, fig.height=2}
+p.umap.origin <- DimPlot(srat,
+  reduction = "umap", group.by = "Origin",
+  raster = TRUE
+) +
+  scale_color_manual(values = origin_color_maps) +
+  labs(title = NULL) +
+  my_theme
+p.umap.origin
+
+# saveRDS(p.umap.origin, file = here::here("output", DOCNAME, "Fig.umap.Origin.rds"))
+ggsave2(p.umap.origin,
+  filename = here::here("output", DOCNAME, "Fig.umap.Origin.pdf"),
+  height = 2, width = 3, device = cairo_pdf
+)
+```
+
+### Patient
+
+```{r fig.width=2.5, fig.height=2}
+p.umap.patient <- DimPlot(srat,
+  reduction = "umap", group.by = "Patient", raster = TRUE
+) +
+  scale_color_manual(values = patient_color_maps) +
+  labs(title = NULL) +
+  my_theme
+p.umap.patient
+
+# saveRDS(p.umap.patient, file = here::here("output", DOCNAME, "Fig.umap.Patient.rds"))
+ggsave2(p.umap.patient,
+  filename = here::here("output", DOCNAME, "Fig.umap.Patient.pdf"),
+  height = 2, width = 2.5, device = cairo_pdf
+)
+```
+
+Split
+
+```{r fig.width=7.5, fig.height=1.2}
+p.umap.splitByPatient <- DimPlot(srat,
+  reduction = "umap", split.by = "Patient",
+  ncol = 8, raster = TRUE
+) +
+  scale_color_manual(values = cell_color_maps) +
+  my_theme +
+  NoAxes() +
+  theme(
+    legend.margin = margin(rep(0, 4), unit = "cm"),
+    legend.spacing.y = unit(0, "cm"),
+    legend.key.height = unit(.4, "cm"),
+    legend.box.margin = margin(rep(-.2, 4), unit = "cm"),
+    plot.margin = margin(rep(0, 4), unit = "cm"),
+    strip.background = element_rect(fill = "#f3f2f1")
+  )
+p.umap.splitByPatient
+
+# saveRDS(p.umap.splitByPatient, file = here::here("output", DOCNAME, "Fig.umap.splitByPatient.rds"))
+ggsave2(p.umap.splitByPatient,
+  filename = here::here("output", DOCNAME, "Fig.umap.splitByPatient.pdf"),
+  height = 1.2, width = 7.5, device = cairo_pdf
+)
+```
+
+### VDJ
+
+```{r fig.width=2.5, fig.height=2}
+srat@meta.data <- srat@meta.data %>%
+  rownames_to_column() %>%
+  mutate(VDJ = case_when(
+    VDJ != "TCR" ~ "None",
+    TRUE ~ "TCR"
+  )) %>%
+  mutate(VDJ = factor(VDJ, levels = c("TCR", "None"))) %>%
+  column_to_rownames()
+p.umap.vdj <- DimPlot(srat,
+  reduction = "umap", group.by = "VDJ", raster = TRUE
+) +
+  scale_color_manual(values = vdj_color_maps) +
+  labs(title = NULL) +
+  my_theme
+p.umap.vdj
+
+# saveRDS(p.umap.vdj, file = here::here("output", DOCNAME, "Fig.umap.VDJ.rds"))
+ggsave2(p.umap.vdj,
+  filename = here::here("output", DOCNAME, "Fig.umap.VDJ.pdf"),
+  height = 2, width = 2.5, device = cairo_pdf
+)
+```
+
+### Metastasis_n
+
+```{r fig.width=2.5, fig.height=2}
+p.umap.metastasis <- DimPlot(srat,
+  reduction = "umap", group.by = "Metastasis_n", raster = TRUE
+) +
+  scale_color_manual(values = metastasis_color_maps) +
+  labs(title = NULL) +
+  my_theme
+p.umap.metastasis
+
+# saveRDS(p.umap.metastasis, file = here::here("output", DOCNAME, "Fig.umap.Metastasis_n.rds"))
+ggsave2(p.umap.metastasis,
+  filename = here::here("output", DOCNAME, "Fig.umap.Metastasis_n.pdf"),
+  height = 2, width = 2.5, device = cairo_pdf
+)
+```
+
+## Markers
+
+DotPlot of markers
+
+```{r plot-cell-markers-supp-dot, fig.width=7.5, fig.height=2}
+p.marker.dot <- DotPlot(srat, features = c(
+  # T
+  "CD3D", "CD3G", "CD3E", "CD2",
+  # B
+  "CD19", "MS4A1", "CD79A", "IGHM",
+  # mye
+  "LYZ", "FCER1G", "TYROBP", "AIF1",
+  # mast
+  "TPSAB1", "TPSB2", "MS4A2", "KIT",
+  # epi
+  "CNFN", "KRT6A", "CRNN", "KRT13",
+  # fib
+  "DCN", "COL1A1", "COL1A2", "LUM",
+  # endo
+  "PECAM1", "CLDN5", "CDH5", "VWF",
+  # platelets
+  "PPBP", "PF4", "ITGA2B", "ITGB3"
+), dot.scale = 4) +
+  labs(x = NULL, y = NULL) +
+  scale_y_discrete(limits = rev) +
+  my_theme +
+  theme(
+    axis.text.x = element_text(angle = 60, hjust = 1)
+  )
+p.marker.dot
+
+# saveRDS(p.marker.dot, file = here::here("output", DOCNAME, "Fig.dotplot.markers.rds"))
+
+ggsave2(p.marker.dot,
+  filename = here::here("output", DOCNAME, "Fig.dotplot.markers.pdf"),
+  height = 2, width = 7.5, device = cairo_pdf
+)
+```
+
+## Composition plot
+
+### By Origin4 by cell type
+
+```{r fig.width=2, fig.height=2}
+p.byOrigin4.byCelltype <- srat@meta.data %>%
+  group_by(Origin4, cellType) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n / sum(n) * 100) %>%
+  ggplot(aes(x = Origin4, y = Percent, fill = cellType)) +
+  geom_bar(stat = "identity") +
+  labs(x = NULL, fill = NULL, y = "% of cells") +
+  scale_fill_manual(values = cell_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  my_theme +
+  theme(
+    axis.text.x = element_text(angle = 60, hjust = 1),
+    legend.margin = margin(rep(0, 4), unit = "cm"),
+    legend.spacing.y = unit(0, "cm"),
+    legend.box.margin = margin(rep(-.2, 4), unit = "cm")
+  )
+p.byOrigin4.byCelltype
+```
+
+### By Origin by cell type
+
+```{r fig.width=3, fig.height=2}
+p.byOrigin.byCelltype <- srat@meta.data %>%
+  group_by(Origin, cellType) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n / sum(n) * 100) %>%
+  ggplot(aes(x = Origin, y = Percent, fill = cellType)) +
+  geom_bar(stat = "identity", color = "white") +
+  labs(x = NULL, fill = NULL, y = "% of cells") +
+  scale_fill_manual(values = cell_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  my_theme +
+  theme(
+    axis.text.x = element_text(angle = 60, hjust = 1),
+    legend.margin = margin(rep(0, 4), unit = "cm"),
+    legend.spacing.y = unit(0, "cm"),
+    legend.box.margin = margin(rep(-.2, 4), unit = "cm")
+  )
+p.byOrigin.byCelltype
+```
+
+### cellType compositions
+
+```{r cellType-compositions, fig.width=6, fig.height=2.5}
+cluster_byOrigin4 <- srat@meta.data %>%
+  group_by(cellType, Origin4) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n / sum(n) * 100)
+cluster_byPatient <- srat@meta.data %>%
+  group_by(cellType, Patient) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n / sum(n) * 100)
+cluster_cellNum <- srat@meta.data %>%
+  group_by(cellType) %>%
+  summarise(n = n())
+
+p1 <- ggplot(cluster_byOrigin4, aes(x = cellType, y = Percent, fill = Origin4)) +
+  geom_bar(stat = "identity", color = "white") +
+  scale_fill_manual(values = origin4_color_maps) +
+  labs(fill = NULL, x = NULL) +
+  coord_flip() +
+  guides(fill = guide_legend(ncol = 1, byrow = TRUE)) +
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_x_discrete(limits = rev) +
+  guides(fill = guide_legend(nrow = 2, byrow = TRUE)) +
+  my_theme +
+  theme(legend.position = "top")
+p2 <- ggplot(cluster_byPatient, aes(x = cellType, y = Percent, fill = Patient)) +
+  geom_bar(stat = "identity", color = "white") +
+  scale_fill_manual(values = patient_color_maps) +
+  labs(fill = NULL, x = NULL) +
+  coord_flip() +
+  guides(fill = guide_legend(ncol = 1, byrow = TRUE)) +
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_x_discrete(limits = rev) +
+  guides(fill = guide_legend(nrow = 2, byrow = TRUE)) +
+  my_theme +
+  theme(legend.position = "top")
+p3 <- ggplot(cluster_cellNum, aes(x = cellType, y = log2(n), fill = "blue")) +
+  geom_bar(stat = "identity", color = "#00008f") +
+  scale_fill_manual(values = "#8f8fb1") +
+  labs(fill = NULL, x = NULL) +
+  coord_flip() +
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_x_discrete(limits = rev) +
+  guides(fill = guide_legend(nrow = 2, byrow = TRUE)) +
+  my_theme +
+  theme(legend.position = "top")
+
+p.cellType.comp <- p1 + p2 + p3 +
+  plot_layout(ncol = 3)
+p.cellType.comp
+
+ggsave2(p.cellType.comp,
+  filename = here::here("output", DOCNAME, "Fig.cellTypeComposition.pdf"),
+  height = 2.5, width = 6, device = cairo_pdf
+)
+```
+
+### Sample composition
+
+Source
+
+```{r sample-compositions, fig.width=7.8, fig.height=3}
+p <- PlotSampleFraction(seurat_obj = srat, "cellType", cell_color_maps)
+p
+
+# saveRDS(p, file = here::here("output", DOCNAME, "Fig.sampleComposition.rds"))
+ggsave2(p,
+  filename = here::here("output", DOCNAME, "Fig.sampleComposition.pdf"),
+  height = 3, width = 7.8, device = cairo_pdf
+)
+```
+
+## HC of Origin4
+
+Heatmap by ComplexHeatmap
+
+```{r plot-top-markers-complex, fig.height=2, fig.width=1.5, warning=FALSE, message=FALSE}
+# Get average expression of variable features across tissue
+# change identity to orig.ident
+Idents(srat) <- "Origin4"
+
+# get average expression across original ident
+var_ave_byOrigin4 = AverageExpression(srat, assays = "RNA", features = VariableFeatures(srat), slot = "data")
+
+# restore cell identity
+Idents(srat) <- "cellType"
+
+# scale
+mat_scale <- pheatmap:::scale_rows(as.matrix(var_ave_byOrigin4$RNA))
+
+# color
+x <- ceiling(max(abs(mat_scale)))
+col_fun <- circlize::colorRamp2(c(-x, 0, x), c("blue", "white", "red"))
+
+ht <- Heatmap(mat_scale,
+  name = "Exp.",
+  col = col_fun,
+  cluster_columns = TRUE, cluster_rows = TRUE,
+  clustering_method_columns = "ward.D2",
+  show_row_names = FALSE,
+  column_names_gp = gpar(fontsize = 6),
+  heatmap_legend_param = list( # direction = "horizontal",
+    labels_gp = gpar(fontsize = 6),
+    title_gp = gpar(fontsize = 6),
+    # title_position = "leftcenter",
+    grid_height = unit(2, "mm"),
+    grid_width = unit(2, "mm")
+  ),
+  column_dend_height = unit(2, "mm"),
+  show_row_dend = FALSE
+)
+draw(ht, heatmap_legend_side = "right")
+p.Origin4.heat <- plot_grid(grid.grabExpr(draw(ht, heatmap_legend_side = "right")))
+
+# save
+ggsave2(p.Origin4.heat,
+  filename = here::here("output", DOCNAME, "Fig.HC_Origin4.pdf"),
+  height = 2, width = 1.5, device = cairo_pdf
+)
+```
+
+## N3-N5
+
+肿瘤组织内异质性
+
+```{r n3-n5, fig.height=3, fig.width=2.5}
+p.cellByN3N4N5 <- srat@meta.data %>%
+  filter(Tissue == "Tumor") %>%
+  group_by(Patient, Origin, cellType) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n / sum(n) * 100) %>%
+  ggplot(aes(x = Origin, y = Percent, fill = cellType)) +
+  geom_col() +
+  labs(x = NULL, fill = NULL) +
+  scale_fill_manual(values = cell_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  facet_wrap(. ~ Patient) +
+  my_theme +
+  theme(
+    axis.text.x = element_text(angle = 60, hjust = 1),
+    legend.margin = margin(rep(0, 4), unit = "cm"),
+    legend.spacing.y = unit(0, "cm"),
+    legend.key.height = unit(.4, "cm"),
+    legend.box.margin = margin(rep(-.2, 4), unit = "cm"),
+    plot.margin = margin(rep(0, 4), unit = "cm"),
+    strip.background = element_rect(fill = "#f3f2f1")
+  )
+p.cellByN3N4N5
+```
+
+## Metastatic
+
+转移阳性的病人与阴性病人
+
+```{r Metastatic, fig.height=3, fig.width=3}
+p.cellByMetastatic <- srat@meta.data %>%
+  group_by(Origin4, Metastatic, cellType) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n / sum(n) * 100) %>%
+  ggplot(aes(x = Metastatic, y = Percent, fill = cellType)) +
+  geom_col() +
+  labs(x = NULL, fill = NULL) +
+  scale_fill_manual(values = cell_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  facet_wrap(. ~ Origin4, ncol = 4) +
+  my_theme +
+  theme(
+    axis.text.x = element_text(angle = 60, hjust = 1),
+    legend.margin = margin(rep(0, 4), unit = "cm"),
+    legend.spacing.y = unit(0, "cm"),
+    legend.key.height = unit(.4, "cm"),
+    legend.box.margin = margin(rep(-.2, 4), unit = "cm"),
+    plot.margin = margin(rep(0, 4), unit = "cm"),
+    strip.background = element_rect(fill = "#f3f2f1")
+  )
+p.cellByMetastatic
+```
+
+## LN Drainage
+
+引流方向
+
+```{r LN-drainage-by-Metastasis-p, fig.height=3, fig.width=2}
+p.cellByDrainage <- srat@meta.data %>%
+  filter(Tissue == "LN") %>%
+  group_by(Metastasis_n, Drainage, cellType) %>%
+  summarise(n = n()) %>%
+  mutate(Percent = n / sum(n) * 100) %>%
+  ggplot(aes(x = Drainage, y = Percent, fill = cellType)) +
+  geom_col() +
+  # geom_bar(stat="identity", position="dodge", width=0.8) +
+  scale_fill_manual(values = cell_color_maps) +
+  scale_y_continuous(expand = c(0, 0)) +
+  labs(x = NULL, fill = NULL) +
+  facet_wrap(. ~ Metastasis_n) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+p.cellByDrainage
+```
+
+## Align plots
+
+### Main
+
+Expression similarity of Origin4
+
+```{r fig.width=8, fig.height=1.5}
+lapply(levels(srat$Origin4), function(t) {
+  tissue_origin <- readRDS(here::here("output/exp_similarity.cross_tissue.Origin4", paste0(t, ".tissue_origin.rds")))
+  tissue_origin <- tissue_origin[!str_detect(tissue_origin$NN_type, "Epi_"), ]
+  plot_sum <- t(as.data.frame(prop.table(table(tissue_origin$NN_tissue)) * 100))
+  plot_sum <- as.data.frame(t(plot_sum))
+  colnames(plot_sum) <- c("Tissue", "Percent")
+  plot_sum$Percent <- as.numeric(as.character(plot_sum$Percent))
+  plot_sum$Tissue <- factor(plot_sum$Tissue, levels = c(
+    "prePBMC", "postPBMC", "nLN", "m_nLN", "m_pLN",
+    "Normal", "Adjacent", "Tumor"
+  ))
+  p <- ggplot(data = plot_sum, aes(x = Tissue, y = Percent)) +
+    geom_bar(stat = "identity", fill = "steelblue") +
+    scale_y_continuous(expand = c(0, 0)) +
+    labs(x = NULL, y = NULL, title = t) +
+    my_theme +
+    theme(axis.text.x = element_text(angle = 60, hjust = 1))
+  p
+}) %>%
+  wrap_plots(nrow = 1)
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.main.exp_similarity.pdf"),
+  width = 8, height = 1.5, device = cairo_pdf
+)
+```
+
+UMAP of cellType, UMAP of Origin4, Origin4 by cellType, UMAP of Patient
+
+```{r fig.width=7.8, fig.height=1.8}
+p.row2.Origin4 <- plot_grid(p.umap.cellType, p.umap.origin4, p.byOrigin4.byCelltype, p.umap.patient,
+  rel_widths = c(1.9, 2.6, 1.9, 2.4), nrow = 1
+)
+p.row2.Origin4
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.main.Origin4_cellType.pdf"),
+  height = 1.8, width = 7.8, device = cairo_pdf
+)
+```
+
+UMAP of epi, fib, endo (epi as cluster)
+
+```{r fig.width=7.5, fig.height=2.5}
+srat.epi <- readRDS(here::here("output/04.rm_cells", "seurat_epithelia.rds"))
+srat.endo <- readRDS(here::here("output/04.rm_cells", "seurat_endothelia.rds"))
+srat.fib <- readRDS(here::here("output/04.rm_cells", "seurat_fibroblasts.rds"))
+
+p.umap.endo <- DimPlot(srat.endo,
+  reduction = "umap", group.by = "level_2",
+  label = TRUE, label.size = geom.text.size,
+  raster = TRUE
+) +
+  scale_color_manual(values = endo_level_2_color) +
+  labs(title = NULL) +
+  my_theme +
+  NoLegend()
+
+p.umap.fib <- DimPlot(srat.fib,
+  reduction = "umap", group.by = "level_3",
+  label = TRUE, label.size = geom.text.size,
+  raster = TRUE
+) +
+  scale_color_manual(values = fib_level_3_color) +
+  labs(title = NULL) +
+  my_theme +
+  NoLegend()
+
+p.umap.epi <- DimPlot(srat.epi,
+  reduction = "umap", group.by = "seurat_clusters",
+  label = TRUE, label.size = geom.text.size,
+  raster = TRUE
+) +
+  scale_color_manual(values = cluster_color_maps) +
+  labs(title = NULL) +
+  my_theme +
+  NoLegend()
+
+p.umap.epi + p.umap.fib + p.umap.endo
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.main.umap_stromal.pdf"),
+  height = 2.5, width = 7.5, device = cairo_pdf
+)
+```
+
+UMAP of epi, fib, endo (epi as malignant)
+
+```{r fig.width=7.6, fig.height=2.5}
+p.umap.endo <- DimPlot(srat.endo,
+  reduction = "umap", group.by = "level_2",
+  label = TRUE, label.size = geom.text.size,
+  raster = TRUE
+) +
+  scale_color_manual(values = endo_level_2_color) +
+  labs(title = NULL) +
+  my_theme +
+  NoLegend()
+
+p.umap.fib <- DimPlot(srat.fib,
+  reduction = "umap", group.by = "level_3",
+  label = TRUE, label.size = geom.text.size,
+  raster = TRUE
+) +
+  scale_color_manual(values = fib_level_3_color) +
+  labs(title = NULL) +
+  my_theme +
+  NoLegend()
+
+p.umap.epi <- DimPlot(srat.epi,
+  reduction = "umap", group.by = "malignant",
+  label.size = geom.text.size,
+  raster = TRUE
+) +
+  scale_color_manual(values = epi_malig_colors) +
+  labs(title = NULL) +
+  my_theme
+
+p.umap.epi + p.umap.fib + p.umap.endo
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.main.main.umap_stromal.epi_malig.pdf"),
+  height = 2.5, width = 7.6, device = cairo_pdf
+)
+```
+
+### Supp
+
+Row 1
+
+```{r fig.width=7.5, fig.height=2}
+ps.row1 <- p.umap.patient + p.umap.vdj + p.umap.metastasis +
+  plot_layout(nrow = 1)
+ps.row1
+
+ggsave2(ps.row1,
+  filename = here::here("output", DOCNAME, "Fig.supp.r1.pdf"),
+  height = 2, width = 7.5, device = cairo_pdf
+)
+```
+
+Row 2
+
+```{r fig.width=7.5, fig.height=2}
+p.marker.dot
+```
+
+Row 3
+
+```{r fig.width=7.5, fig.height=1.2}
+p.umap.splitByOrigin4
+```
+
+Row 4
+
+```{r fig.width=7.5, fig.height=2.5}
+ps.row4 <- p.Origin4.heat + p.cellType.comp +
+  plot_layout(widths = c(1.5, 6))
+ps.row4
+
+ggsave2(ps.row4,
+  filename = here::here("output", DOCNAME, "Fig.supp.r4.pdf"),
+  height = 2.5, width = 7.5, device = cairo_pdf
+)
+```
+
+Row 5
+
+```{r fig.width=7.5, fig.height=3}
+ps.row5 <- p.cellByN3N4N5 + p.cellByMetastatic + p.cellByDrainage +
+  plot_layout(
+    widths = c(3, 3, 1.5),
+    guides = "collect"
+  )
+ps.row5
+
+ggsave2(ps.row5,
+  filename = here::here("output", DOCNAME, "Fig.supp.r5.pdf"),
+  height = 3, width = 7.5, device = cairo_pdf
+)
+```
+
+## Session info

@@ -1,0 +1,510 @@
+---
+title: "00.Fig.endothelia"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "00.Fig.endothelia"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = FALSE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+
+# patch
+library(patchwork)
+library(cowplot)
+theme_set(theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6, # title
+  font_family = "Arial"
+))
+my_theme <- theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6, # title
+  font_family = "Arial"
+)
+geom.text.size <- 6 / (14 / 5)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+library(circlize)
+
+# color
+library(ggsci)
+
+# Seurat
+library(Seurat)
+
+# monocle
+library(monocle3)
+
+# enrichment
+library(clusterProfiler)
+library(org.Hs.eg.db)
+```
+
+Load code
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+## Load data
+
+Load srat
+
+```{r load-rds, cache=FALSE}
+srat <- readRDS(here::here("output/04.rm_cells/seurat_endothelia.rds"))
+Idents(srat) <- "level_2"
+srat
+```
+
+Load metadata
+
+```{r load-meta, cache=FALSE, message=FALSE, warning=FALSE}
+metadata <- read_csv(here::here("output/04.rm_cells/seurat_endothelia.cellmeta.csv")) %>%
+  mutate(cellType3 = level_2)
+sam_info <- read_csv(here::here("data/sample_info.3.csv"))
+```
+
+Load c2c
+
+```{r load-c2c, cache=FALSE}
+df_c2c <- readRDS(here::here("data", "c2c.endo.rds"))
+head(df_c2c)
+```
+
+## UMAP {.tabset}
+
+### Level 2
+
+```{r fig.width=3, fig.height=2.2, cache=FALSE}
+p.umap.cellType <- DimPlot(srat,
+  reduction = "umap", group.by = "level_2",
+  raster = TRUE
+) +
+  scale_color_manual(values = endo_level_2_color) +
+  labs(title = NULL) +
+  my_theme
+p.umap.cellType
+
+ggsave2(p.umap.cellType,
+  filename = here::here("output", DOCNAME, "Fig.umap.cellType.pdf"),
+  height = 2.5, width = 3, device = cairo_pdf
+)
+```
+
+With label
+
+```{r fig.width=2.5, fig.height=2.5, cache=FALSE}
+p.umap.celltype <- DimPlot(srat,
+  reduction = "umap", group.by = "level_2",
+  label = TRUE, label.size = geom.text.size,
+  raster = TRUE
+) +
+  scale_color_manual(values = endo_level_2_color) +
+  labs(title = NULL) +
+  my_theme +
+  theme(legend.position = "none")
+p.umap.celltype
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.umap.cellType.labelled.pdf"),
+  height = 2.5, width = 2.5, device = cairo_pdf
+)
+```
+
+## Classification
+
+### markers
+
+```{r fig.width=3, fig.height=3.5, message=FALSE, warning=FALSE}
+markers <- list(
+  arteries = filter_features(srat, c("GJA5", "DKK2", "FBLN5")),
+  pcv = filter_features(srat, c("SELE", "SELP", "ACKR1", "CPE")),
+  immature = filter_features(srat, c("RBP7", "GSN", "ID2", "ID3", "ENG", "PLVAP", "VWA1", "MMP2", "KDR")),
+  tip = filter_features(srat, c(
+    "CXCR4", "ANGPTL2", "ESM1", "APLN" # , "PGF", "PDGFB", 'ESM1', 'PGF'
+  )),
+  lymphatics = filter_features(srat, c(
+    "PDPN", "LYVE1" # , "CCL21", "TFF3", "MMRN1"
+  ))
+)
+
+mat <- AverageExpression(srat,
+  assays = "RNA", features = unlist(markers),
+  slot = "data", verbose = F
+)$RNA
+mat <- log1p(as.matrix(mat))
+# scale
+mat_scale <- pheatmap:::scale_rows(mat)
+
+# color
+x <- ceiling(max(abs(mat_scale)))
+col_fun <- circlize::colorRamp2(c(-x, 0, x), c("#476fa9", "#ffffff", "#ca3226"))
+legend_name <- "Exp."
+
+ht <- ComplexHeatmap::Heatmap(mat_scale,
+  name = legend_name,
+  col = col_fun,
+  cluster_columns = FALSE, cluster_rows = FALSE,
+  show_row_names = TRUE, show_column_names = TRUE,
+  row_names_side = "right",
+  row_names_gp = gpar(fontsize = 6, fontface = "italic"),
+  column_names_gp = gpar(fontsize = 6),
+  column_names_rot = 60,
+  row_split = factor(
+    rep(names(markers), sapply(markers, length)),
+    levels = names(markers)
+  ),
+  row_title_gp = gpar(fontsize = 6),
+  column_split = factor(c(
+    rep(c("arteries"), 1),
+    rep(c("pcv"), 5),
+    rep(c("immature"), 1),
+    rep(c("tip"), 1),
+    rep(c("lymph"), 2)
+  ),
+  levels = c("arteries", "pcv", "immature", "tip", "lymph")
+  ),
+  column_title = NULL,
+  left_annotation = rowAnnotation(
+    empty = anno_empty(
+      border = FALSE,
+      width = unit(1, "mm")
+    ),
+    foo = anno_block(
+      gp = gpar(
+        fill = "gray",
+        col = "gray"
+      ),
+      width = unit(0.5, "mm")
+    )
+  ),
+  heatmap_legend_param = list(
+    title_position = "topcenter",
+    direction = "vertical",
+    labels_gp = gpar(fontsize = 6),
+    title_gp = gpar(fontsize = 8),
+    grid_height = unit(3, "mm"),
+    grid_width = unit(3, "mm")
+  )
+)
+
+# draw(ht)
+p.markers.canonical <- plot_grid(grid.grabExpr(draw(ht)))
+p.markers.canonical
+
+# save
+saveRDS(p.markers.canonical, file = here::here("output", DOCNAME, "Fig.markers.canonical.rds"))
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.markers.canonical.pdf"),
+  height = 3.5, width = 3, device = cairo_pdf
+)
+```
+
+Small
+
+```{r fig.width=1.8, fig.height=2, message=FALSE, warning=FALSE}
+ht <- ComplexHeatmap::Heatmap(mat_scale,
+  name = legend_name,
+  col = col_fun,
+  cluster_columns = FALSE, cluster_rows = FALSE,
+  show_row_names = TRUE, show_column_names = TRUE,
+  row_names_side = "right",
+  row_names_gp = gpar(fontsize = 4, fontface = "italic"),
+  column_names_gp = gpar(fontsize = 4),
+  column_names_rot = 60,
+  row_split = factor(
+    rep(names(markers), sapply(markers, length)),
+    levels = names(markers)
+  ),
+  row_title_gp = gpar(fontsize = 4),
+  column_split = factor(c(
+    rep(c("arteries"), 1),
+    rep(c("pcv"), 5),
+    rep(c("immature"), 1),
+    rep(c("tip"), 1),
+    rep(c("lymph"), 2)
+  ),
+  levels = c("arteries", "pcv", "immature", "tip", "lymph")
+  ),
+  column_title = NULL,
+  left_annotation = rowAnnotation(
+    empty = anno_empty(
+      border = FALSE,
+      width = unit(1, "mm")
+    ),
+    foo = anno_block(
+      gp = gpar(
+        fill = "gray",
+        col = "gray"
+      ),
+      width = unit(0.5, "mm")
+    )
+  ),
+  heatmap_legend_param = list(
+    title_position = "topcenter",
+    direction = "vertical",
+    labels_gp = gpar(fontsize = 4),
+    title_gp = gpar(fontsize = 6),
+    grid_height = unit(3, "mm"),
+    grid_width = unit(3, "mm")
+  )
+)
+
+# draw(ht)
+p.markers.canonical <- plot_grid(grid.grabExpr(draw(ht)))
+p.markers.canonical
+
+# save
+saveRDS(p.markers.canonical, file = here::here("output", DOCNAME, "Fig.markers.canonical.small.rds"))
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.markers.canonical.small.pdf"),
+  height = 2, width = 1.8, device = cairo_pdf
+)
+```
+
+
+## Origin2 enrichment
+
+```{r fig.width=1.8, fig.height=2, warning=FALSE}
+cluster_cellNum <- metadata %>%
+  group_by(cellType3) %>%
+  summarise(cluster.cell_num = n()) %>%
+  mutate(cluster.cell_num = as.numeric(cluster.cell_num))
+
+origin2_CellNum <- sam_info %>%
+  group_by(Origin2_n) %>%
+  summarise(origin.cell_num = sum(cell.filtered)) %>%
+  mutate(origin.cell_num = as.numeric(origin.cell_num)) %>%
+  mutate(total = sum(origin.cell_num)) %>%
+  mutate(total = as.numeric(total))
+
+cluster_byOrigin2 <- metadata %>%
+  group_by(cellType3, Origin2_n) %>%
+  summarise(o = n()) %>%
+  mutate(o = as.numeric(o))
+
+# add origins not existing
+tmp <- setdiff(unique(metadata$Origin2_n), cluster_byOrigin2$Origin2_n)
+if (length(tmp) > 0) {
+  for (t in tmp) {
+    x <- tibble(cellType3 = unique(cluster_cellNum$cellType3), Origin2_n = t, o = 0)
+    cluster_byOrigin2 <- bind_rows(cluster_byOrigin2, x)
+  }
+}
+
+r_oe <- cluster_byOrigin2 %>%
+  left_join(origin2_CellNum, by = "Origin2_n") %>%
+  left_join(cluster_cellNum, by = "cellType3") %>%
+  mutate(e = (origin.cell_num * cluster.cell_num) / total) %>%
+  mutate(r = o / e) %>%
+  dplyr::select(cellType3, Origin2_n, r) %>%
+  spread(Origin2_n, r, fill = 0) %>%
+  column_to_rownames("cellType3")
+
+# order
+tmp.df <- r_oe %>%
+  rownames_to_column("cellType3") %>%
+  arrange(nLN, pLN, Normal, Adjacent, Tumor)
+
+# data for plot
+r_oe[r_oe > 10] <- 10
+d4p <- r_oe %>%
+  rownames_to_column("cellType3") %>%
+  pivot_longer(cols = !cellType3, names_to = "Origin2_n") %>%
+  mutate(
+    Origin2_n = factor(Origin2_n, levels = c(
+      "prePBMC", "postPBMC",
+      "nLN", "pLN",
+      "Normal", "Adjacent",
+      "Tumor"
+    )),
+    cellType3 = factor(cellType3, levels = tmp.df$cellType3)
+  )
+
+# % lineage prop
+df.lineage_prop <- metadata %>%
+  group_by(cellType3, Origin2_n) %>%
+  summarise(cellType3.cell_num = n()) %>%
+  mutate(cellType3.cell_num = as.numeric(cellType3.cell_num)) %>%
+  ungroup() %>%
+  mutate(tot = nrow(metadata)) %>%
+  mutate(lineage.prop = cellType3.cell_num * 100 / tot)
+
+# plot
+p.roe <- d4p %>%
+  filter(!str_detect(Origin2_n, "PBMC")) %>%
+  ggplot(aes(x = Origin2_n, y = cellType3, fill = value)) +
+  geom_tile() +
+  geom_point(
+    data = df.lineage_prop,
+    aes(x = Origin2_n, y = cellType3, size = lineage.prop),
+    shape = 1,
+    inherit.aes = FALSE
+  ) +
+  scale_x_discrete(position = "top") +
+  scale_y_discrete(position = "right") +
+  scale_fill_gradient2(
+    midpoint = 1,
+    low = "blue", mid = "white", high = "red",
+    name = expression(R[O / E])
+  ) +
+  scale_size(range = c(1, 3)) +
+  labs(size = "% lineage") +
+  theme_cowplot(font_size = 6) +
+  theme(
+    axis.text.x = element_text(angle = 60, hjust = 0),
+    axis.title = element_blank(),
+    axis.line = element_blank(),
+    axis.ticks = element_blank(),
+    legend.position = "right",
+    text = element_text(size = 6)
+  )
+p.roe
+
+# save
+saveRDS(p.roe, file = here::here("output", DOCNAME, "Fig.Roe.byOrigin2_n.rds"))
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.Roe.byOrigin2_n.pdf"),
+  height = 2, width = 1.8, device = cairo_pdf
+)
+```
+
+## Selected genes
+
+### Leukocyte Adhesion Molecules, and Chemokines
+
+- E-selectin is only expressed in activated endothelia cells
+
+- In activated endothelium, E-selectin expression is largely confined to postcapillary venules (Aird, 2012)
+
+- In “resting” endothelium, P-selectin is stored intracellularly in preexisting Weibel–Palade bodies and is expressed preferentially in postcapillary venules (Aird William C., 2007)
+
+- Binding of endothelial E-selectin and P-selectin to leukocyte carbohydrate-based ligands promotes rolling of leukocytes to the endothelium
+
+- Binding of endothelial cell adhesion molecules, including vascular cell adhesion molecule
+(VCAM)-1 and intercellular adhesion molecule (ICAM)-1 to leukocyte integrins mediates firm adhesion.
+
+- T cells for tumor immunotherapy was enhanced when proinflammatory agents that up-regulated ICAM and VCAM (Dudley, 2012)
+
+```{r selectin-no-PECAM1, fig.width=3, fig.height=3}
+p <- StackedVlnPlot(srat, features = c("SELE", "SELP", "ICAM1", "ICAM2", "VCAM1"))
+p
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.exp_selected_genes.selectin.pdf"),
+  height = 3, width = 3, device = cairo_pdf
+)
+```
+
+## cmp. subtypes
+
+### pcv-C1C2C3_vs_pcv-C5
+
+```{r fig.width=2.5, fig.height=2}
+ck <- read.table(here::here('output', "06.endothelia.cmp_pcv", 'deg.cmp_tn_pcv.KEGG.txt'), sep = "\t", header = T)
+
+d4p <- ck %>% 
+  filter(Description %in% c("Cytokine-cytokine receptor interaction",
+                            "MAPK signaling pathway")) %>% 
+  rowwise %>% 
+  mutate(ratio = eval(rlang::parse_expr(GeneRatio)))
+
+ggplot(data = d4p, aes(x = Cluster, y = Description)) +
+  geom_point(aes(size = ratio, color = p.adjust)) +
+  scale_color_continuous(high = "#e06663", low = "#327eba") +
+  labs(x = NULL, y = NULL) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "deg.cmp_pcv-C1C2C3_vs_pcv-C5.KEGG.pdf"),
+  width = 2.5, height = 2, device = cairo_pdf
+)
+```
+
+### LEC-C2_vs_LEC-C1
+
+```{r fig.width=2.5, fig.height=2}
+deg <- read_csv(here::here('output', "06.endothelia.cmp_lymphatic", 'deg.LEC-C2_vs_LEC-C1.csv'))
+compareList = list(
+  LEC_C2 = deg %>%filter(p_val_adj < 0.01, avg_logFC > 0.25) %>% pull(gene) %>%
+    bitr(fromType="SYMBOL", toType=c("ENTREZID"), OrgDb="org.Hs.eg.db") %>% pull(ENTREZID),
+  LEC_C1 = deg %>% filter(p_val_adj < 0.01, avg_logFC < -0.25) %>% pull(gene) %>%
+    bitr(fromType="SYMBOL", toType=c("ENTREZID"), OrgDb="org.Hs.eg.db") %>% pull(ENTREZID)
+)
+
+cg.BP = compareCluster(compareList, fun = "enrichGO", OrgDb = org.Hs.eg.db, ont = "BP",
+                       pAdjustMethod = "BH", pvalueCutoff = 0.01, qvalueCutoff = 0.05, readable = T)
+
+d4p <- cg.BP
+d4p@compareClusterResult <- d4p@compareClusterResult %>% 
+  filter(Description %in% c("aging", "translational initiation"))
+
+
+dotplot(d4p) + 
+  scale_y_discrete(labels = function(x) str_wrap(x, width = 40)) + 
+  #scale_size(range = c(0, 5)) +
+  my_theme +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "deg.cmp_LEC-C2_vs_LEC-C1.GO-BP.pdf"),
+  width = 2.5, height = 2, device = cairo_pdf
+)
+```
+
+
+## Session info

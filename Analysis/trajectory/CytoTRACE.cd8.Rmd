@@ -1,0 +1,340 @@
+---
+title: "CytoTRACE.cd8"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME = "CytoTRACE.cd8"
+#dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+    if (before) {
+        print(paste("Start:", Sys.time()))
+        NOW <<- Sys.time()
+    } else {
+        print(paste("Stop:", Sys.time()))
+        print(Sys.time() - NOW)
+    }
+})
+
+knitr::opts_chunk$set(
+    autodep        = TRUE,
+    cache          = FALSE,
+    cache.path     = paste0("cache/", DOCNAME, "/"),
+    cache.lazy     = FALSE, 
+    cache.comments = FALSE,
+    echo           = TRUE,
+    error          = FALSE,
+    fig.align      = "center",
+    fig.width      = 10,
+    fig.height     = 8,
+    message        = FALSE,
+    warning        = FALSE,
+    timeit         = TRUE
+)
+```
+
+Using [CytoTRACE](https://cytotrace.stanford.edu) to predict the differentiation state of cells. Higher CytoTRACE value implies higher developmental potential.
+
+Paper of CytoTRACE: Gulati, G.S., Sikandar, S.S., Wesche, D.J., Manjunath, A., Bharadwaj, A., Berger, M.J., Ilagan, F., Kuo, A.H., Hsieh, R.W., Cai, S., et al. (2020). Single-cell transcriptional diversity is a hallmark of developmental potential. Science 367, 405–411.
+
+Run `CytoTRACE.cd8.R` first.
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(ggplotify)
+library(ggcorrplot)
+library(cowplot)
+library(patchwork)
+library(ggpubr)
+theme_set(theme_cowplot(font_size = 10))
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+
+# color
+library(ggsci)
+
+# Seurat
+library(Seurat)
+
+# CytoTRACE
+library(CytoTRACE)
+```
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+## random1
+
+Load rds
+
+```{r load-rds-random1, cache=FALSE}
+srat = readRDS(here::here('output/04.rm_cells/seurat_cd8.random1.rds'))
+Idents(srat) <- 'level_3'
+srat
+```
+
+Load CytoTRACE results
+
+```{r load-CytoTRACE-random1, cache=FALSE}
+result = readRDS(here::here("output", DOCNAME, "CytoTRACE.random1.rds"))
+```
+
+Vis
+
+```{r vis-random1, fig.height=3, fig.width=3}
+meta = FetchData(srat, vars = c('UMAP_1', 'UMAP_2', 'level_3', "Patient")) %>%
+  rownames_to_column('barcode')
+
+tibble(barcode = names(result$CytoTRACE),
+       value = result$CytoTRACE) %>%
+  left_join(meta, by = 'barcode') %>%
+  ggplot(aes(x=reorder(level_3, -value, median), y=value, fill=level_3)) +
+  geom_boxplot() +
+  scale_fill_manual(values = t_level_3_color) +
+  labs(y= 'Predicted order', x = NULL) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+```{r vis-CytoTRACE, fig.height=3.5, fig.width=4}
+tibble(barcode = names(result$CytoTRACE),
+       value = result$CytoTRACE) %>%
+  left_join(meta, by = 'barcode') %>%
+  ggplot(aes(x=UMAP_1, y=UMAP_2, color=value)) +
+  geom_point(size = .5) +
+  scale_color_viridis_c() +
+  labs(color = 'Predicted\norder')
+```
+
+## random2
+
+Load rds
+
+```{r load-rds-random2, cache=FALSE}
+srat = readRDS(here::here('output/04.rm_cells/seurat_cd8.random2.rds'))
+Idents(srat) <- 'level_3'
+srat
+```
+
+Load CytoTRACE results
+
+```{r load-CytoTRACE-random2, cache=FALSE}
+result = readRDS(here::here("output", DOCNAME, "CytoTRACE.random2.rds"))
+```
+
+Vis
+
+```{r vis-random2, fig.height=3, fig.width=3}
+meta = FetchData(srat, vars = c('UMAP_1', 'UMAP_2', 'level_3', "Patient")) %>%
+  rownames_to_column('barcode')
+
+tibble(barcode = names(result$CytoTRACE),
+       value = result$CytoTRACE) %>%
+  left_join(meta, by = 'barcode') %>%
+  ggplot(aes(x=reorder(level_3, -value, median), y=value, fill=level_3)) +
+  geom_boxplot() +
+  scale_fill_manual(values = t_level_3_color) +
+  labs(y= 'Predicted order', x = NULL) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+```{r vis-CytoTRACE-random2, fig.height=3.5, fig.width=4}
+tibble(barcode = names(result$CytoTRACE),
+       value = result$CytoTRACE) %>%
+  left_join(meta, by = 'barcode') %>%
+  ggplot(aes(x=UMAP_1, y=UMAP_2, color=value)) +
+  geom_point(size = .5) +
+  scale_color_viridis_c() +
+  labs(color = 'Predicted\norder')
+```
+
+## random3
+
+Load rds
+
+```{r load-rds-random3, cache=FALSE}
+srat = readRDS(here::here('output/04.rm_cells/seurat_cd8.random3.rds'))
+Idents(srat) <- 'level_3'
+srat
+```
+
+Load CytoTRACE results
+
+```{r load-CytoTRACE-random3, cache=FALSE}
+result = readRDS(here::here("output", DOCNAME, "CytoTRACE.random3.rds"))
+```
+
+Vis
+
+```{r vis-random3, fig.height=3, fig.width=3}
+meta = FetchData(srat, vars = c('UMAP_1', 'UMAP_2', 'level_3', "Patient")) %>%
+  rownames_to_column('barcode')
+
+tibble(barcode = names(result$CytoTRACE),
+       value = result$CytoTRACE) %>%
+  left_join(meta, by = 'barcode') %>%
+  ggplot(aes(x=reorder(level_3, -value, median), y=value, fill=level_3)) +
+  geom_boxplot() +
+  scale_fill_manual(values = t_level_3_color) +
+  labs(y= 'Predicted order', x = NULL) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+```{r vis-CytoTRACE-random3, fig.height=3.5, fig.width=4}
+tibble(barcode = names(result$CytoTRACE),
+       value = result$CytoTRACE) %>%
+  left_join(meta, by = 'barcode') %>%
+  ggplot(aes(x=UMAP_1, y=UMAP_2, color=value)) +
+  geom_point(size = .5) +
+  scale_color_viridis_c() +
+  labs(color = 'Predicted\norder')
+```
+
+## random4
+
+Load rds
+
+```{r load-rds-random4, cache=FALSE}
+srat = readRDS(here::here('output/04.rm_cells/seurat_cd8.random4.rds'))
+Idents(srat) <- 'level_3'
+srat
+```
+
+Load CytoTRACE results
+
+```{r load-CytoTRACE-random4, cache=FALSE}
+result = readRDS(here::here("output", DOCNAME, "CytoTRACE.random4.rds"))
+```
+
+Vis
+
+```{r vis-random4, fig.height=3, fig.width=3}
+meta = FetchData(srat, vars = c('UMAP_1', 'UMAP_2', 'level_3', "Patient")) %>%
+  rownames_to_column('barcode')
+
+tibble(barcode = names(result$CytoTRACE),
+       value = result$CytoTRACE) %>%
+  left_join(meta, by = 'barcode') %>%
+  ggplot(aes(x=reorder(level_3, -value, median), y=value, fill=level_3)) +
+  geom_boxplot() +
+  scale_fill_manual(values = t_level_3_color) +
+  labs(y= 'Predicted order', x = NULL) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+```{r vis-CytoTRACE-random4, fig.height=3.5, fig.width=4}
+tibble(barcode = names(result$CytoTRACE),
+       value = result$CytoTRACE) %>%
+  left_join(meta, by = 'barcode') %>%
+  ggplot(aes(x=UMAP_1, y=UMAP_2, color=value)) +
+  geom_point(size = .5) +
+  scale_color_viridis_c() +
+  labs(color = 'Predicted\norder')
+```
+
+## random5
+
+Load rds
+
+```{r load-rds-random5, cache=FALSE}
+srat = readRDS(here::here('output/04.rm_cells/seurat_cd8.random5.rds'))
+Idents(srat) <- 'level_3'
+srat
+```
+
+Load CytoTRACE results
+
+```{r load-CytoTRACE-random5, cache=FALSE}
+result = readRDS(here::here("output", DOCNAME, "CytoTRACE.random5.rds"))
+```
+
+Vis
+
+```{r vis-random5, fig.height=3, fig.width=3}
+meta = FetchData(srat, vars = c('UMAP_1', 'UMAP_2', 'level_3', "Patient")) %>%
+  rownames_to_column('barcode')
+
+tibble(barcode = names(result$CytoTRACE),
+       value = result$CytoTRACE) %>%
+  left_join(meta, by = 'barcode') %>%
+  ggplot(aes(x=reorder(level_3, -value, median), y=value, fill=level_3)) +
+  geom_boxplot() +
+  scale_fill_manual(values = t_level_3_color) +
+  labs(y= 'Predicted order', x = NULL) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+```{r vis-CytoTRACE-random5, fig.height=3.5, fig.width=4}
+tibble(barcode = names(result$CytoTRACE),
+       value = result$CytoTRACE) %>%
+  left_join(meta, by = 'barcode') %>%
+  ggplot(aes(x=UMAP_1, y=UMAP_2, color=value)) +
+  geom_point(size = .5) +
+  scale_color_viridis_c() +
+  labs(color = 'Predicted\norder')
+```
+
+## random6
+
+Load rds
+
+```{r load-rds-random6, cache=FALSE}
+srat = readRDS(here::here('output/04.rm_cells/seurat_cd8.random6.rds'))
+Idents(srat) <- 'level_3'
+srat
+```
+
+Load CytoTRACE results
+
+```{r load-CytoTRACE-random6, cache=FALSE}
+result = readRDS(here::here("output", DOCNAME, "CytoTRACE.random6.rds"))
+```
+
+Vis
+
+```{r vis-random6, fig.height=3, fig.width=3}
+meta = FetchData(srat, vars = c('UMAP_1', 'UMAP_2', 'level_3', "Patient")) %>%
+  rownames_to_column('barcode')
+
+tibble(barcode = names(result$CytoTRACE),
+       value = result$CytoTRACE) %>%
+  left_join(meta, by = 'barcode') %>%
+  ggplot(aes(x=reorder(level_3, -value, median), y=value, fill=level_3)) +
+  geom_boxplot() +
+  scale_fill_manual(values = t_level_3_color) +
+  labs(y= 'Predicted order', x = NULL) +
+  theme(legend.position = 'none',
+        axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+```{r vis-CytoTRACE-random6, fig.height=3.5, fig.width=4}
+tibble(barcode = names(result$CytoTRACE),
+       value = result$CytoTRACE) %>%
+  left_join(meta, by = 'barcode') %>%
+  ggplot(aes(x=UMAP_1, y=UMAP_2, color=value)) +
+  geom_point(size = .5) +
+  scale_color_viridis_c() +
+  labs(color = 'Predicted\norder')
+```
+
+
+## Session info
+

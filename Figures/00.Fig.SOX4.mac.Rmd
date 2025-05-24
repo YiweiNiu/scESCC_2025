@@ -1,0 +1,244 @@
+---
+title: "00.Fig.SOX4.mac"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "00.Fig.SOX4.mac"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = FALSE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+#library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+
+# patch
+library(patchwork)
+library(cowplot)
+theme_set(theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+))
+my_theme <- theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+)
+geom.text.size <- 6 / (14 / 5)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+
+# color
+library(ggsci)
+
+# pvclust
+library(pvclust)
+library(dendextend)
+
+# Seurat
+library(Seurat)
+```
+
+Load code
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+devtools::load_all(here::here("code/Rscir"))
+```
+
+Load rds
+
+```{r load-rds, cache=FALSE}
+srat <- readRDS(here::here("output/04.rm_cells/seurat_mac.rds"))
+Idents(srat) <- "level_3"
+srat
+```
+
+Load cell meta
+
+```{r load-cell-meta, cache=FALSE, message=FALSE, warning=FALSE}
+cell_meta <- read_csv(here::here("output/04.rm_cells/seurat_mac.cellmeta.csv")) %>%
+  dplyr::select(barcode, Origin2_n, seurat_clusters, level_2, level_3)
+head(cell_meta)
+
+sam_info <- read_csv(here::here("data/sample_info.3.csv")) %>%
+  mutate(cell.filtered = as.numeric(cell.filtered))
+```
+
+## SOX4 in subtypes
+
+```{r fig.width=3, fig.height=2}
+VlnPlot(srat, features = "SOX4", pt.size = 0.001) +
+  scale_fill_manual(values = mye_level_3_color) +
+  labs(x = NULL, y = "Exp.") +
+  my_theme +
+  NoLegend() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.mac_level3_SOX4.pdf"),
+  height = 2, width = 3, device = cairo_pdf
+)
+```
+
+## SOX4 in diff. Origin2_n
+
+SOX4 在 mregDC、pDC-C4 中在 origin2 不同位置的表达情况
+
+```{r fig.width=2, fig.height=1.5}
+VlnPlot(srat,
+              features = "SOX4", group.by = "Origin2_n", pt.size = 0.001) +
+  scale_fill_manual(values = origin2_color_maps) +
+  labs(x = NULL, y = "Exp.", title = "Mac") +
+  my_theme +
+  NoLegend() +
+  theme(axis.text.x = element_blank())
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.mac_Origin2_SOX4.pdf"),
+  height = 2.5, width = 2, device = cairo_pdf
+)
+```
+
+## Cor. with genes/signatures
+
+Genes
+
+```{r fig.width=3, fig.height=3}
+srat_sub <- srat
+
+x <- FetchData(srat_sub, slot = "data", vars = "SOX4")
+y <- FetchData(srat_sub, slot = "data", vars = c("SIRPA", "LILRB1", "CXCL8"))
+
+as.data.frame(t(cor(x, y))) %>% rownames_to_column() %>% 
+  dplyr::select(x = rowname, y = SOX4) %>% 
+  ggplot(aes(x = reorder(x, -y), y = y)) +
+  geom_point(size = 3) +
+  geom_segment(aes(x=x, 
+                   xend=x, 
+                   y=0, 
+                   yend=y)) +
+  labs(x = NULL, y = "cor") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle=65, hjust=1))
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.mac_SOX4_gene_cor.pdf"),
+  width = 3, height = 3, device = cairo_pdf
+)
+```
+
+Signatures
+
+```{r fig.width=4, fig.height=3}
+gs_lst <- list(
+  # M1
+  M1 = filter_features(srat, c("CCR7", "IL2RA", "IL15RA", "IL7R", "CXCL11", "CCL19", "CXCL10", "CXCL9", "TNF", "CCL5", "CCL15", "IL12B", "IL15", "TNFSF10", "IL6", "CCL20", "NAMPT", "TYMP", "BCL2A1", "FAS", "BIRC3", "GADD45G", "XAF1", "SLC7A5", "SLCO5A1", "SLC2A6", "SLC31A2", "IDO1", "PLA1A", "OASL", "CHI3L2", "HSD11B1", "AK3", "SPHK1", "PFKFB3", "PSME2", "PFKP", "PSMB9", "PSMA2", "OAS2", "PTX3", "VCAN", "APOL3", "IGFBP4", "APOL1", "PDGFA", "EDN1", "APOL2", "INHBA", "APOL6", "HESX1", "IRF1", "ATF3", "IRF7")),
+  # M2
+  M2 = filter_features(srat, c("P2RY13", "LPAR6", "TGFBR2", "HRH1", "TLR5", "CD302", "MSR1", "CXCR4", "CLEC7A", "P2RY14", "CD209", "CLEC10A", "MS4A6A", "CD36", "MS4A4A", "MRC1", "IGF1", "CCL23", "CCL18", "CCL13", "SLCO2B1", "SLC4A7", "SLC38A6", "CTSC", "HEXB", "LIPA", "ADK", "HNMT", "TPST2", "CERK", "HS3ST2", "LTA4H", "CA2", "ALOX15", "HS3ST1", "TGFBI", "SELENOP", "CHN2", "FN1", "FGL2", "GAS7", "EGR2", "MAF")),
+  # angiogenesis
+  angiogenesis = filter_features(srat, c("CCL3", "VEGFA", "SND1", "MTDH", "ITGA5", "TNF", "CXCL3", "ANXA3", "HMGB1", "HIF1A", "SEMA4D", "LRG1", "CHIL1")),
+  # TAM activation
+  TAM_acti = filter_features(srat, c("APOE", "SPP1", "FN1", "CD276", "CD9", "TREM2", "LGALS3", "CD59", "C1QB", "CHIT1", "CCL18", "CD63", "MARCO", "C2", "CD81", "A2M", "CD84", "IFI27", "NRP2", "CD68")),
+  # ECM remodeling
+  ECM_remodel = filter_features(srat, c("ADAMDEC1", "CTSC", "CTSB", "RGCC", "CTSS", "CTSZ", "ADAM17", "ADAM10", "ADAM8", "CTSL", "CTSA", "CTSS", "LYZ", "MMP9", "MMP14")),
+  # immunosuppression
+  immunosuppression = filter_features(srat, c("HAVCR2", "FCGR2B", "IL4RA", "CD274", "HIF1A", "IL15")),
+  # proinflammatory cytokines
+  proinflammatory_cytokines = filter_features(srat, c("PTGS2", "CXCL2", "IL8", "CXCL5", "CXCL1", "IL1B", "IL1A", "CSF3", "IL6")),
+  # FcR and complement
+  FcR_complement = filter_features(srat, c("FCER1G", "FCGR2A", "FCGR3A", "C1QC", "C1QA", "C1QB", "C5AR1", "C3")),
+  # antigenic presentation
+  antigenic_presentation = filter_features(srat, c("CD1C", "CD1E", "CD74", "HLA-DQA1", "HLA-DQA2", "HLA-DQB1", "HLA-DQB2", "HLA-DPA1", "HLA-DPB1", "HLA-DRA", "HLA-DRB1", "HLA-DRB5")),
+  # FcR and complement
+  FcR_complement = filter_features(srat, c("FCER1G", "FCGR2A", "FCGR3A", "C1QC", "C1QA", "C1QB", "C5AR1", "C3")),
+    # hypoxia
+  Hypoxia = filter_features(srat, c("AL2", "ALDOA", "AM", "BCL2", "BCL2L1", "FOS", "JUN", "SRC", "CBP", "CCR6", "CEBPB", "ENOLAS", "FAS", "FASLG", "FKBP52", "GAPDH", "GLUT1", "GLUT3", "CSF2", "IFNG", "IFNB1", "IL13", "IL1R1", "IL2RA", "IL4", "IL5", "IL6R", "IL8", "IL10R", "IL15R", "ITGA6", "ITK", "JUN D", "CLB54", "MAP3K5", "MAP2K1", "MAP2K2", "MIF", "NFATC1", "NFKB2", "NFKBIE", "P53", "TGM6", "TNF", "TNFRSF1B", "TRADD", "TRAIL", "TRAP1", "VEGF"))
+)
+
+# get score
+srat_sub <- AddModuleScore(srat_sub, features = gs_lst)
+gs_score <- srat_sub@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  dplyr::select(barcode, starts_with("Cluster")) %>% 
+  column_to_rownames("barcode")
+colnames(gs_score) <- names(gs_lst)
+x <- FetchData(srat_sub, slot = "data", vars = "SOX4")
+
+# plot
+y <- cor(x$SOX4, gs_score)
+d4p <- as.data.frame(t(y)) %>% 
+  rownames_to_column("x") %>%
+  dplyr::rename(y = V1)
+
+d4p %>% 
+  ggplot(aes(x = reorder(x, -y), y = y)) +
+  geom_point(size = 3) +
+  geom_segment(aes(x=x, 
+                   xend=x, 
+                   y=0, 
+                   yend=y)) +
+  labs(x = NULL, y = "cor") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle=65, hjust=1))
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.mac_SOX4_gs_cor.pdf"),
+  height = 3, width = 3, device = cairo_pdf
+)
+```
+
+## Session info
+
+

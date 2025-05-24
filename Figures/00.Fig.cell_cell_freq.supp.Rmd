@@ -1,0 +1,207 @@
+---
+title: "00.Fig.cell_cell_freq.supp"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "00.Fig.cell_cell_freq.supp"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = FALSE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+# library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+library(ggtree)
+
+# patch
+library(patchwork)
+library(cowplot)
+my_theme <- theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+)
+geom.text.size <- 6 / (14 / 5)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+library(dendextend)
+
+# color
+library(ggsci)
+
+# Seurat
+library(Seurat)
+
+# vis
+# library(scRNAtoolVis)
+```
+
+Load code
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+# source(here::here("code/plot.R"))
+```
+
+## HC of cell freq
+
+Load metadata
+
+```{r load-meta, cache=FALSE, message=FALSE, warning=FALSE}
+metadata <- read_csv(here::here("output/04.rm_cells/seurat.cellmeta.csv"))
+sam_info <- read_csv(here::here("data/sample_info.3.csv"))
+```
+
+Neat
+
+```{r}
+# n mat
+mat <- metadata %>%
+  group_by(cellType3, Origin2_n) %>%
+  summarise(o = n()) %>%
+  ungroup() %>%
+  complete(cellType3, Origin2_n, fill = list(o = 0)) %>%
+  mutate(o = as.numeric(o)) %>%
+  pivot_wider(id_cols = "Origin2_n", names_from = "cellType3", values_from = "o") %>%
+  column_to_rownames("Origin2_n")
+```
+
+HC
+
+```{r }
+cor_dat <- cor(mat, method = "spearman")
+dist_dat <- as.dist(1 - cor_dat)
+
+hc <- hclust(dist_dat, method = "average")
+dend <- as.dendrogram(hc)
+dend <- rev(dend)
+
+dend <- dend %>%
+  set("branches_lwd", 1) %>%
+  set("branches_k_color", k = 5, value = c(
+    "#999999", "#E69F00", "#56B4E9", "#009E73",
+    "#F0E442", "#0072B2", "#D55E00", "#CC79A7"
+  ))
+```
+
+pheatmap
+
+```{r fig.width=8, fig.height=7}
+labels <- hc$labels[hc$order]
+
+# myColor <- colorRampPalette(c("blue", "white", "red"))(100)
+col <- colorRampPalette(c("#4477AA", "#77AADD", "#FFFFFF", "#EE9988", "#BB4444"))
+x <- pheatmap::pheatmap(cor_dat[labels, labels],
+  cluster_rows = F, cluster_cols = F,
+  color = col(200), border_color = NA,
+  fontsize = 4
+)
+
+pdf(
+  file = here::here("output", DOCNAME, "Fig.freq_cor_heatmap_pheatmap.pdf"),
+  width = 8, height = 7
+)
+x
+invisible(dev.off())
+```
+
+heatmap.2
+
+```{r fig.width=8, fig.height=7}
+# cut positions
+tree_cut <- cutree(hc, 5)[hc$labels[hc$order]]
+sep_pos <- c()
+for (i in 2:length(tree_cut)) {
+  if (tree_cut[i] - tree_cut[i - 1] != 0) {
+    sep_pos <- c(sep_pos, i - 1)
+  }
+}
+
+# plot
+gplots::heatmap.2(as.matrix(cor_dat),
+  srtCol = 60,
+  dendrogram = "row",
+  # tree
+  Rowv = dend,
+  Colv = rev(dend),
+  # sep
+  rowsep = sep_pos, colsep = sep_pos,
+  sepwidth = c(.5, .5),
+  trace = "none",
+  col = colorRampPalette(c("#4477AA", "#77AADD", "#FFFFFF", "#EE9988", "#BB4444")),
+  # label
+  margins = c(2, 2),
+  cexCol = 0.3, cexRow = 0.3,
+  key = FALSE, keysize = .7, key.title = NA, key.xlab = NA, key.ylab = NA, density.info = "none"
+)
+
+pdf(
+  file = here::here("output", DOCNAME, "Fig.freq_cor_heatmap.pdf"),
+  width = 8, height = 7
+)
+gplots::heatmap.2(as.matrix(cor_dat),
+  srtCol = 60,
+  dendrogram = "row",
+  # tree
+  Rowv = dend,
+  Colv = rev(dend),
+  # sep
+  rowsep = sep_pos, colsep = sep_pos,
+  sepwidth = c(.5, .5),
+  trace = "none",
+  col = colorRampPalette(c("#4477AA", "#77AADD", "#FFFFFF", "#EE9988", "#BB4444")),
+  # label
+  margins = c(2, 2),
+  cexCol = 0.3, cexRow = 0.3,
+  key = FALSE, keysize = .7, key.title = NA, key.xlab = NA, key.ylab = NA, density.info = "none"
+)
+invisible(dev.off())
+```
+
+## Session info
+

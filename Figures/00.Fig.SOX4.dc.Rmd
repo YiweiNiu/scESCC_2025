@@ -1,0 +1,454 @@
+---
+title: "00.Fig.SOX4.dc"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "00.Fig.SOX4.dc"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = FALSE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+#library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+
+# patch
+library(patchwork)
+library(cowplot)
+my_theme <- theme_cowplot(
+  font_size = 6,# Overall font size
+  rel_small = 6 / 6,# axis tick labels
+  rel_tiny = 6 / 6,# caption
+  rel_large = 6 / 6 # title
+)
+geom.text.size <- 6 / (14 / 5)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+
+# color
+library(ggsci)
+
+# Seurat
+library(Seurat)
+```
+
+Load code
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+Load meta data
+
+```{r load-meta, message=FALSE, warning=FALSE}
+meta.data <- read_csv(here::here("output/04.rm_cells/seurat_dc.cellmeta.csv")) %>% 
+  mutate(
+    level_2 = case_when(
+      level_2 == "tDC" ~ "mregDC",
+      TRUE ~ level_2
+    ),
+    level_3 = case_when(
+      level_3 == "tDC-C3" ~ "mregDC-C3",
+      TRUE ~ level_3
+    )
+  )
+sam_info <- read_csv(here::here("data/sample_info.3.csv")) %>%
+  mutate(cell.filtered = as.numeric(cell.filtered))
+```
+
+Load rds
+
+```{r load-rds, cache=FALSE}
+srat = readRDS(here::here('output/04.rm_cells/seurat_dc.rds'))
+srat
+```
+
+Modify srat
+
+- tDC to mregDC
+- levels
+
+```{r}
+srat@meta.data <- srat@meta.data %>% 
+  rownames_to_column() %>% 
+  mutate(
+    level_2 = case_when(
+      level_2 == "tDC" ~ "mregDC",
+      TRUE ~ level_2
+    ),
+    level_3 = case_when(
+      level_3 == "tDC-C3" ~ "mregDC-C3",
+      TRUE ~ level_3
+    )
+  ) %>% 
+  mutate(
+    level_3 = factor(level_3, levels = c("cDC2-C1", "cDC2-C2", "mregDC-C3", "cDC1-C5", "cDC1-C6", "pDC-C7", "pDC-C8", "pDC-C4"))
+  ) %>% 
+  column_to_rownames()
+
+Idents(srat) <- "level_3"
+```
+
+## SOX4 in subtypes
+
+```{r fig.width=3, fig.height=2}
+VlnPlot(srat, features = "SOX4", pt.size = 0) +
+  scale_fill_manual(values = mye_level_3_color) +
+  labs(x = NULL, y = "Exp.") +
+  my_theme +
+  NoLegend() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.dc_level3_SOX4.pdf"),
+  height = 2, width = 3, device = cairo_pdf
+)
+```
+
+with dot
+
+```{r fig.width=3, fig.height=2}
+VlnPlot(srat, features = "SOX4", pt.size = 0.001) +
+  scale_fill_manual(values = mye_level_3_color) +
+  labs(x = NULL, y = "Exp.") +
+  my_theme +
+  NoLegend() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.dc_level3_SOX4_withDot.pdf"),
+  height = 2, width = 3, device = cairo_pdf
+)
+```
+
+
+## SOX4 in diff. Origin2_n
+
+SOX4 在 mregDC、pDC-C4 中在 origin2 不同位置的表达情况
+
+```{r fig.width=2, fig.height=2.5}
+p1 <- VlnPlot(subset(srat, subset = level_3 == "mregDC-C3"),
+              features = "SOX4", group.by = "Origin2_n", pt.size = 0) +
+  scale_fill_manual(values = origin2_color_maps) +
+  labs(x = NULL, y = "Exp.", title = "mregDC-C3") +
+  my_theme +
+  NoLegend() +
+  theme(axis.text.x = element_blank())
+p2 <- VlnPlot(subset(srat, subset = level_3 == "pDC-C4"),
+              features = "SOX4", group.by = "Origin2_n", pt.size = 0) +
+  scale_fill_manual(values = origin2_color_maps) +
+  labs(x = NULL, y = "Exp.", title = "pDC-C4") +
+  my_theme +
+  NoLegend() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+p1/p2
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.dc_Origin2_SOX4.pdf"),
+  height = 2.5, width = 2, device = cairo_pdf
+)
+```
+
+with dot
+
+```{r fig.width=2, fig.height=2.5}
+p1 <- VlnPlot(subset(srat, subset = level_3 == "mregDC-C3"),
+              features = "SOX4", group.by = "Origin2_n", pt.size = 0.001) +
+  scale_fill_manual(values = origin2_color_maps) +
+  labs(x = NULL, y = "Exp.", title = "mregDC-C3") +
+  my_theme +
+  NoLegend() +
+  theme(axis.text.x = element_blank())
+p2 <- VlnPlot(subset(srat, subset = level_3 == "pDC-C4"),
+              features = "SOX4", group.by = "Origin2_n", pt.size = 0.001) +
+  scale_fill_manual(values = origin2_color_maps) +
+  labs(x = NULL, y = "Exp.", title = "pDC-C4") +
+  my_theme +
+  NoLegend() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+p1/p2
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.dc_Origin2_SOX4_withDot.pdf"),
+  height = 2.5, width = 2, device = cairo_pdf
+)
+```
+
+## Cor. with genes/signatures in DC2 + mregDC
+
+Genes
+
+```{r fig.width=3, fig.height=3}
+srat_sub <- subset(srat, subset = level_2 == c("cDC2", "mregDC"))
+
+x <- FetchData(srat_sub, slot = "data", vars = "SOX4")
+y <- FetchData(srat_sub, slot = "data", vars = c("CD274", "PDCD1LG2", "CCR7", "CXCR4", "GPR183", "CXCL8"))
+
+as.data.frame(t(cor(x, y))) %>% rownames_to_column() %>% 
+  dplyr::select(x = rowname, y = SOX4) %>% 
+  ggplot(aes(x = reorder(x, -y), y = y)) +
+  geom_point(size = 3) +
+  geom_segment(aes(x=x, 
+                   xend=x, 
+                   y=0, 
+                   yend=y)) +
+  labs(x = NULL, y = "cor") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle=65, hjust=1))
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.cDC2_mregDC_SOX4_gene_cor.pdf"),
+  width = 3, height = 3, device = cairo_pdf
+)
+```
+
+Signatures
+
+```{r fig.width=3, fig.height=3}
+gs_lst <- list(
+  # leukocyte chemotaxis
+  leu_chemotaxis = filter_features(srat_sub, GOfuncR::get_anno_genes("GO:0030595") %>% pull(gene)),
+  # antigen processing and presentation
+  antigen_pp = filter_features(srat_sub, GOfuncR::get_anno_genes("GO:0019882") %>% pull(gene)),
+  # leukocyte cell-cell adhesion
+  leu_adhesion = filter_features(srat_sub, GOfuncR::get_anno_genes("GO:0007159") %>% pull(gene)),
+    # migration
+  mig = filter_features(srat_sub, c(
+    "CCR7", "DOCK8", "EZH1", "EZH2", "L1CAM", "CMKLR1", "CD74", "HLA-DRA",
+    "HLA-DQA1", "HLA-DRB5", "HLA-DPB1", "EPS8", "ASB2", "RAPGEF3", "RAP1A",
+    "ITPR1", "MYH2", "RHOA", "DIAPH1", "CDC42", "ACTR2", "ACTR3", "CD37", "CD82", "CD2AP"
+  )),
+  # maturation
+  mat = filter_features(srat_sub, c(
+    "CCR7", "IKKB", "CHUK", "HLA-DRA", "HLA-DRB1", "HLA-DQA1",
+    "CD40", "CD80", "CD86", "CD83", "MYD88", "MAP3K7", "IFNA1",
+    "IFNB1", "IFNG"
+  ))
+)
+
+# get score
+srat_sub <- AddModuleScore(srat_sub, features = gs_lst)
+gs_score <- srat_sub@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  dplyr::select(barcode, starts_with("Cluster")) %>% 
+  column_to_rownames("barcode")
+colnames(gs_score) <- names(gs_lst)
+x <- FetchData(srat_sub, slot = "data", vars = "SOX4")
+
+# plot
+y <- cor(x$SOX4, gs_score)
+d4p <- as.data.frame(t(y)) %>% 
+  rownames_to_column("x") %>%
+  dplyr::rename(y = V1)
+
+d4p %>% 
+  ggplot(aes(x = reorder(x, -y), y = y)) +
+  geom_point(size = 3) +
+  geom_segment(aes(x=x, 
+                   xend=x, 
+                   y=0, 
+                   yend=y)) +
+  labs(x = NULL, y = "cor") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle=65, hjust=1))
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.cDC2_mregDC_SOX4_gs_cor.pdf"),
+  height = 3, width = 3, device = cairo_pdf
+)
+```
+
+## Cor. with genes/signatures in pDC-C4
+
+Genes
+
+```{r fig.width=3, fig.height=3}
+srat_sub <- subset(srat, subset = level_3 == "pDC-C4")
+
+x <- FetchData(srat_sub, slot = "data", vars = "SOX4")
+y <- FetchData(srat_sub, slot = "data", vars = c("TLR7", "TLR9", "IFNA1"))
+
+as.data.frame(t(cor(x, y))) %>% rownames_to_column() %>% 
+  dplyr::select(x = rowname, y = SOX4) %>% 
+  ggplot(aes(x = reorder(x, -y), y = y)) +
+  geom_point(size = 3) +
+  geom_segment(aes(x=x, 
+                   xend=x, 
+                   y=0, 
+                   yend=y)) +
+  labs(x = NULL, y = "cor") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle=65, hjust=1))
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.pDC-C4_SOX4_TLR7_TLR9_IFNA1_cor.pdf"),
+  width = 3, height = 3, device = cairo_pdf
+)
+```
+
+Signatures
+
+```{r fig.width=3, fig.height=3}
+gs_lst <- list(
+  # GOBP_RESPONSE_TO_TYPE_I_INTERFERON
+  t1_ifn = filter_features(srat_sub, GOfuncR::get_anno_genes("GO:0034340") %>% pull(gene)),
+  # antigen processing and presentation
+  antigen_pp = filter_features(srat_sub, GOfuncR::get_anno_genes("GO:0019882") %>% pull(gene))
+)
+
+# get score
+srat_sub <- AddModuleScore(srat_sub, features = gs_lst)
+gs_score <- srat_sub@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  dplyr::select(barcode, starts_with("Cluster")) %>% 
+  column_to_rownames("barcode")
+colnames(gs_score) <- names(gs_lst)
+x <- FetchData(srat_sub, slot = "data", vars = "SOX4")
+
+# plot
+y <- cor(x$SOX4, gs_score)
+d4p <- as.data.frame(t(y)) %>% 
+  rownames_to_column("x") %>%
+  dplyr::rename(y = V1)
+
+d4p %>% 
+  ggplot(aes(x = reorder(x, -y), y = y)) +
+  geom_point(size = 3) +
+  geom_segment(aes(x=x, 
+                   xend=x, 
+                   y=0, 
+                   yend=y)) +
+  labs(x = NULL, y = "cor") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle=65, hjust=1))
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.pDC-C4_SOX4_SOX4_gs_cor.pdf"),
+  height = 3, width = 3, device = cairo_pdf
+)
+```
+
+## Cor. with genes/signatures in pDC
+
+Genes
+
+```{r fig.width=3, fig.height=3}
+srat_sub <- subset(srat, subset = level_2 == "pDC")
+
+x <- FetchData(srat_sub, slot = "data", vars = "SOX4")
+y <- FetchData(srat_sub, slot = "data", vars = c("TLR7", "TLR9", "IFNA1"))
+
+as.data.frame(t(cor(x, y))) %>% rownames_to_column() %>% 
+  dplyr::select(x = rowname, y = SOX4) %>% 
+  ggplot(aes(x = reorder(x, -y), y = y)) +
+  geom_point(size = 3) +
+  geom_segment(aes(x=x, 
+                   xend=x, 
+                   y=0, 
+                   yend=y)) +
+  labs(x = NULL, y = "cor") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle=65, hjust=1))
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.pDC_SOX4_TLR7_TLR9_IFNA1_cor.pdf"),
+  width = 3, height = 3, device = cairo_pdf
+)
+```
+
+Signatures
+
+```{r fig.width=3, fig.height=3}
+gs_lst <- list(
+  # GOBP_RESPONSE_TO_TYPE_I_INTERFERON
+  t1_ifn = filter_features(srat_sub, GOfuncR::get_anno_genes("GO:0034340") %>% pull(gene)),
+  # antigen processing and presentation
+  antigen_pp = filter_features(srat_sub, GOfuncR::get_anno_genes("GO:0019882") %>% pull(gene))
+)
+
+# get score
+srat_sub <- AddModuleScore(srat_sub, features = gs_lst)
+gs_score <- srat_sub@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  dplyr::select(barcode, starts_with("Cluster")) %>% 
+  column_to_rownames("barcode")
+colnames(gs_score) <- names(gs_lst)
+x <- FetchData(srat_sub, slot = "data", vars = "SOX4")
+
+# plot
+y <- cor(x$SOX4, gs_score)
+d4p <- as.data.frame(t(y)) %>% 
+  rownames_to_column("x") %>%
+  dplyr::rename(y = V1)
+
+d4p %>% 
+  ggplot(aes(x = reorder(x, -y), y = y)) +
+  geom_point(size = 3) +
+  geom_segment(aes(x=x, 
+                   xend=x, 
+                   y=0, 
+                   yend=y)) +
+  labs(x = NULL, y = "cor") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle=65, hjust=1))
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.pDC_SOX4_SOX4_gs_cor.pdf"),
+  height = 3, width = 3, device = cairo_pdf
+)
+```
+
+## Session info
+

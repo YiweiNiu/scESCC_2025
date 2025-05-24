@@ -1,0 +1,181 @@
+---
+title: "02.cell_type"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r knitr, include = FALSE}
+DOCNAME = "02.cell_type"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+dir.create(here::here("docs", "assets", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+    if (before) {
+        print(paste("Start:", Sys.time()))
+        NOW <<- Sys.time()
+    } else {
+        print(paste("Stop:", Sys.time()))
+        print(Sys.time() - NOW)
+    }
+})
+
+knitr::opts_chunk$set(
+    autodep        = TRUE,
+    cache          = TRUE,
+    cache.path     = paste0("cache/", DOCNAME, "/"),
+    cache.lazy     = FALSE, 
+    cache.comments = FALSE,
+    echo           = TRUE,
+    error          = FALSE,
+    fig.align      = "center",
+    fig.width      = 10,
+    fig.height     = 8,
+    message        = FALSE,
+    warning        = FALSE,
+    timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Seurat
+library(Seurat)
+
+# Plotting
+library(scales)
+library(ggrastr)
+library(ggcorrplot)
+library(pheatmap)
+library(ggpubr)
+library(ggplotify)
+library(ggrepel)
+
+# pvclust
+library(pvclust)
+library(dendextend)
+
+# fonts
+library(extrafont)
+#font_import()
+#font_import(paths = "/T02Data/niuyw/.local/share/fonts")
+loadfonts(device = "pdf", quiet = TRUE)
+
+# patch
+library(cowplot)
+theme_set(theme_cowplot(font_size = 12,
+                        rel_small = 10/12,
+                        rel_tiny = 8/12,
+                        rel_large = 12/12,
+                        font_family = "Arial"))
+library(patchwork)
+
+# color
+library(ggsci)
+```
+
+```{r source, cache=FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+Load rds directly (since the process is too slow)
+
+```{r load-rds, cache=FALSE}
+seurat = readRDS(here::here('output', '01.preprocess_2', 'seurat.rds'))
+Idents(seurat) <- 'cellType'
+seurat
+```
+
+## Assign cell types
+
+```{r assign-cell-type, eval=FALSE}
+Idents(seurat) <- 'seurat_clusters'
+
+seurat <- RenameIdents(seurat, `0` = 'T cells', `1` = 'T cells', `2` = 'T cells', `3` = 'B cells', `4` = 'B cells', `5` = 'T cells', `6` = 'T cells', `7` = 'T cells', `8` = 'T cells', `9` = 'T cells', `10` = 'T cells', `11` = 'Epithelia', `12` = 'Myeloid', `13` = 'Fibroblasts', `14` = 'Myeloid', `15` = 'T cells', `16` = 'Fibroblasts', `17` = 'Epithelia', `18` = 'Epithelia', `19` = 'T cells', `20` = 'Epithelia', `21` = 'Epithelia', `22` = 'Epithelia', `23` = 'Epithelia', `24` = 'B cells', `25` = 'B cells', `26` = 'Epithelia', `27` = 'Epithelia', `28` = 'Fibroblasts', `29` = 'T cells', `30` = 'Epithelia', `31` = 'Endothelia', `32` = 'Myeloid', `33` = 'Myeloid', `34` = 'Myeloid', `35` = 'T cells', `36` = 'Epithelia', `37` = 'T cells', `38` = 'T cells', `39` = 'T cells', `40` = 'Fibroblasts', `41` = 'Platelets', `42` = 'Epithelia', `43` = 'B cells', `44` = 'T cells')
+
+# set level
+Idents(seurat) = factor(Idents(seurat), levels = c('T cells', 'B cells', 'Myeloid', 'Epithelia', 'Fibroblasts', 'Endothelia', 'Platelets'))
+
+# add cell type to metadata
+seurat$cellType = Idents(seurat)
+```
+
+```{r preprocess-child, cache=FALSE}
+src <- knitr::knit_expand(file = here::here("analysis/child/cell_type.Rmd"))
+```
+
+`r knitr::knit(text = unlist(src))`
+
+## Save
+
+```{r save-rds, eval=FALSE}
+saveRDS(seurat, file = here::here('output', '01.preprocess_2', 'seurat.rds'))
+```
+
+Save cell meta
+
+```{r save-cell-meta, eval=FALSE}
+vars = c('seurat_clusters', 'cellType', 'UMAP_1', 'UMAP_2')
+df = FetchData(seurat, vars = vars) %>%
+  rownames_to_column('barcode')
+write_csv(df, 
+          path = here::here('output', DOCNAME, 'seurat.cellmeta.csv')
+          )
+```
+
+Save rds file for each cell type
+
+```{r save-rds-cell, eval=FALSE}
+seurat_tcells = subset(seurat, subset = cellType == 'T cells')
+saveRDS(seurat_tcells, file = here::here('output', DOCNAME, paste0('seurat_tcells', '.rds')))
+
+seurat_bcells = subset(seurat, subset = cellType == 'B cells')
+saveRDS(seurat_bcells, file = here::here('output', DOCNAME, paste0('seurat_bcells', '.rds')))
+
+seurat_myeloid = subset(seurat, subset = cellType == 'Myeloid')
+saveRDS(seurat_myeloid, file = here::here('output', DOCNAME, paste0('seurat_myeloid', '.rds')))
+
+seurat_epithelia = subset(seurat, subset = cellType == 'Epithelia')
+saveRDS(seurat_epithelia, file = here::here('output', DOCNAME, paste0('seurat_epithelia', '.rds')))
+
+seurat_fibroblasts = subset(seurat, subset = cellType == 'Fibroblasts')
+saveRDS(seurat_fibroblasts, file = here::here('output', DOCNAME, paste0('seurat_fibroblasts', '.rds')))
+
+seurat_endothelia = subset(seurat, subset = cellType == 'Endothelia')
+saveRDS(seurat_endothelia, file = here::here('output', DOCNAME, paste0('seurat_endothelia', '.rds')))
+
+seurat_platelets = subset(seurat, subset = cellType == 'Platelets')
+saveRDS(seurat_platelets, file = here::here('output', DOCNAME, paste0('seurat_platelets', '.rds')))
+```
+
+## Summary
+
+We assign cell types to the clusters
+* using canonical markers
+
+### Output files
+
+```{r output-files}
+# markers of each cluster
+file.copy(here::here('output', DOCNAME, 'cell.markers.txt'), here::here("docs/assets", DOCNAME), overwrite = TRUE)
+
+knitr::kable(data.frame(
+  File = c(
+    "[cell.markers.txt](assets/02.cell_type/cell.markers.txt)"
+  ),
+  Description = c(
+    "markers of each cell type"
+  )
+))
+```

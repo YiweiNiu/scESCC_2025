@@ -1,0 +1,666 @@
+---
+title: "00.Fig.DE_TF"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "00.Fig.DE_TF"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = FALSE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+library(corrplot)
+#library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+
+# patch
+library(patchwork)
+library(cowplot)
+my_theme <- theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+)
+geom.text.size <- 6 / (14 / 5)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+
+# color
+library(ggsci)
+
+# Seurat
+library(Seurat)
+```
+
+Load code
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+## Load data
+
+## GLM (patient correction) {.tabset}
+
+### Fibroblasts
+
+```{r fig.width=1.75, fig.height=3}
+cell_type = "fibroblasts"
+anno_level = "level_3"
+
+# load
+de_tf.glm_patient = read_csv(here::here("output", paste0("DE_TF.", cell_type), "de_tf.glm_patient.csv"))
+
+# cluster 2 cellType
+df_c2c = readRDS(here::here("data", "c2c.fib.rds"))
+
+# cell types
+d4p = de_tf.glm_patient %>%
+  left_join(df_c2c, by = "cluster") %>%
+  dplyr::rename(cellType3 = level_3)
+
+# save
+d4p %>% 
+  dplyr::select(cellType3, gene, t, p, p_adj) %>% 
+  write_csv(file = here::here("output", DOCNAME, paste0(cell_type, ".de_tf.glm_patient.csv")))
+
+# t_mat
+t_mat = d4p %>%
+  pivot_wider(id_cols = "gene", names_from = "cellType3", values_from = "t") %>%
+  column_to_rownames("gene")
+t_mat = t_mat[,levels(d4p$cellType3)]
+
+# select rows to show
+selected_row = d4p %>%
+  filter(p_adj < 0.05) %>% # keep only those with p_adj < 0.05
+  group_by(cluster) %>%
+  top_n(3, wt = t) %>%
+  pull(gene) %>% unique()
+
+plot_heatmap_glm(as.matrix(t_mat[selected_row,]), cluster_columns = FALSE,
+                 show_row_dend = FALSE)
+
+ggsave2(
+  filename = here::here("output", DOCNAME, paste0("Fig.de_tf.", cell_type, ".pdf")),
+  width = 1.75, height = 3
+)
+```
+
+### Endothelia
+
+```{r fig.width=1.5, fig.height=2.5}
+cell_type = "endothelia"
+anno_level = "level_2"
+
+# load
+de_tf.glm_patient = read_csv(here::here("output", paste0("DE_TF.", cell_type), "de_tf.glm_patient.csv"))
+
+# cluster 2 cellType
+df_c2c = readRDS(here::here("data", "c2c.endo.rds"))
+
+# cell types
+d4p = de_tf.glm_patient %>%
+  left_join(df_c2c, by = "cluster") %>%
+  dplyr::rename(cellType3 = level_2)
+
+# save
+d4p %>% 
+  dplyr::select(cellType3, gene, t, p, p_adj) %>% 
+  write_csv(file = here::here("output", DOCNAME, paste0(cell_type, ".de_tf.glm_patient.csv")))
+
+# t_mat
+t_mat = d4p %>%
+  pivot_wider(id_cols = "gene", names_from = "cellType3", values_from = "t") %>%
+  column_to_rownames("gene")
+t_mat = t_mat[,levels(d4p$cellType3)]
+
+# select rows to show
+selected_row = d4p %>%
+  filter(p_adj < 0.05) %>% # keep only those with p_adj < 0.05
+  group_by(cluster) %>%
+  top_n(3, wt = t) %>%
+  pull(gene) %>% unique()
+
+plot_heatmap_glm(as.matrix(t_mat[selected_row,]), cluster_columns = FALSE,
+                 show_row_dend = FALSE)
+
+ggsave2(
+  filename = here::here("output", DOCNAME, paste0("Fig.de_tf.", cell_type, ".pdf")),
+  width = 1.5, height = 2.5
+)
+```
+
+### Epithelia
+
+```{r fig.width=8, fig.height=8}
+cell_type = "epithelia"
+anno_level = "level_3"
+
+# load
+de_tf.glm_patient = read_csv(here::here("output", paste0("DE_TF.", cell_type), "de_tf.glm_patient.csv"))
+
+# cell types
+d4p = de_tf.glm_patient %>%
+  mutate(cellType3 = paste0("Epi_", cluster)) %>%
+  mutate(cellType3 = factor(cellType3, levels = paste0("Epi_", 0:max(cluster))))
+
+# save
+d4p %>% 
+  dplyr::select(cellType3, gene, t, p, p_adj) %>% 
+  write_csv(file = here::here("output", DOCNAME, paste0(cell_type, ".de_tf.glm_patient.csv")))
+
+# t_mat
+t_mat = d4p %>%
+  pivot_wider(id_cols = "gene", names_from = "cellType3", values_from = "t") %>%
+  column_to_rownames("gene")
+t_mat = t_mat[,levels(d4p$cellType3)]
+
+# select rows to show
+selected_row = d4p %>%
+  filter(p_adj < 0.05) %>% # keep only those with p_adj < 0.05
+  group_by(cluster) %>%
+  top_n(3, wt = t) %>%
+  pull(gene) %>% unique()
+
+plot_heatmap_glm(as.matrix(t_mat[selected_row,]), cluster_columns = FALSE)
+```
+
+Pheatmap
+
+```{r fig.width=8, fig.height=8}
+x = pheatmap::pheatmap(as.matrix(t_mat[selected_row,]),
+                   scale = "row",
+                   color = colorRampPalette(c("blue","white","red"))(100),
+                   #treeheight_row = 0,
+                   clustering_method = "complete",
+                   fontsize = 8,
+                   border_color = "white")
+```
+
+Same column order as above
+
+```{r fig.width=3.5, fig.height=4.5}
+plot_heatmap_glm(as.matrix(t_mat[x$tree_row$labels[x$tree_row$order], x$tree_col$labels[x$tree_col$order]]),
+                 cluster_columns = FALSE,
+                 cluster_rows = FALSE,
+                 show_row_dend = FALSE)
+
+ggsave2(
+  filename = here::here("output", DOCNAME, paste0("Fig.de_tf.", cell_type, ".pdf")),
+  width = 3.5, height = 4.5
+)
+```
+
+### Myeloid
+
+```{r fig.width=2.5, fig.height=3.5}
+cell_type = "myeloid"
+anno_level = "level_3"
+
+# load
+de_tf.glm_patient = read_csv(here::here("output", paste0("DE_TF.", cell_type), "de_tf.glm_patient.csv"))
+
+# cluster 2 cellType
+df_c2c = readRDS(here::here("data", "c2c.mye.rds"))
+
+# cell types
+d4p = de_tf.glm_patient %>%
+  mutate(cluster = factor(cluster)) %>%
+  left_join(df_c2c, by = "cluster") %>%
+  dplyr::rename(cellType3 = level_3)
+
+# save
+d4p %>% 
+  dplyr::select(cellType3, gene, t, p, p_adj) %>% 
+  write_csv(file = here::here("output", DOCNAME, paste0(cell_type, ".de_tf.glm_patient.csv")))
+
+# t_mat
+t_mat = d4p %>%
+  pivot_wider(id_cols = "gene", names_from = "cellType3", values_from = "t") %>%
+  column_to_rownames("gene")
+t_mat = t_mat[,levels(d4p$cellType3)]
+
+# select rows to show
+selected_row = d4p %>%
+  filter(p_adj < 0.05) %>% # keep only those with p_adj < 0.05
+  group_by(cluster) %>%
+  top_n(3, wt = t) %>%
+  pull(gene) %>% unique()
+
+plot_heatmap_glm(as.matrix(t_mat[selected_row,]), cluster_columns = FALSE,
+                 show_row_dend = FALSE)
+
+ggsave2(
+  filename = here::here("output", DOCNAME, paste0("Fig.de_tf.", cell_type, ".pdf")),
+  width = 2.5, height = 3.5
+)
+```
+
+### Bcells
+
+```{r fig.width=2.5, fig.height=3.5}
+cell_type = "bcells"
+anno_level = "level_2"
+
+# load
+de_tf.glm_patient = read_csv(here::here("output", paste0("DE_TF.", cell_type), "de_tf.glm_patient.csv"))
+
+# cluster 2 cellType
+df_c2c = readRDS(here::here("data", "c2c.b.rds"))
+
+# cell types
+d4p = de_tf.glm_patient %>%
+  mutate(cluster = factor(cluster)) %>%
+  left_join(df_c2c, by = "cluster") %>%
+  dplyr::rename(cellType3 = level_2)
+
+# save
+d4p %>% 
+  dplyr::select(cellType3, gene, t, p, p_adj) %>% 
+  write_csv(file = here::here("output", DOCNAME, paste0(cell_type, ".de_tf.glm_patient.csv")))
+
+# t_mat
+t_mat = d4p %>%
+  pivot_wider(id_cols = "gene", names_from = "cellType3", values_from = "t") %>%
+  column_to_rownames("gene")
+t_mat = t_mat[,levels(d4p$cellType3)]
+
+# select rows to show
+selected_row = d4p %>%
+  filter(p_adj < 0.05) %>% # keep only those with p_adj < 0.05
+  group_by(cluster) %>%
+  top_n(3, wt = t) %>%
+  pull(gene) %>% unique()
+
+plot_heatmap_glm(as.matrix(t_mat[selected_row,]), cluster_columns = FALSE,
+                 show_row_dend = FALSE)
+
+ggsave2(
+  filename = here::here("output", DOCNAME, paste0("Fig.de_tf.", cell_type, ".pdf")),
+  width = 2.5, height = 3.5
+)
+```
+
+### CD8 T {.tabset}
+
+#### Random 1
+
+```{r fig.width=1.75, fig.height=2.5}
+cell_type = "cd8.random1"
+anno_level = "level_3"
+
+# load
+de_tf.glm_patient = read_csv(here::here("output", paste0("DE_TF.", cell_type), "de_tf.glm_patient.csv"))
+
+# cluster 2 cellType
+df_c2c = readRDS(here::here("data", "c2c.t.rds")) %>%
+  filter(level_1 == "CD8") %>%
+  droplevels()
+
+# cell types
+d4p = de_tf.glm_patient %>%
+  #mutate(cluster = factor(cluster)) %>%
+  left_join(df_c2c, by = "cluster") %>%
+  dplyr::rename(cellType3 = level_3)
+
+# save
+d4p %>% 
+  dplyr::select(cellType3, gene, t, p, p_adj) %>% 
+  write_csv(file = here::here("output", DOCNAME, paste0(cell_type, ".de_tf.glm_patient.csv")))
+
+# t_mat
+t_mat = d4p %>%
+  pivot_wider(id_cols = "gene", names_from = "cellType3", values_from = "t") %>%
+  column_to_rownames("gene")
+t_mat = t_mat[,levels(d4p$cellType3)]
+
+# select rows to show
+selected_row = d4p %>%
+  filter(p_adj < 0.05) %>% # keep only those with p_adj < 0.05
+  group_by(cluster) %>%
+  top_n(3, wt = t) %>%
+  pull(gene) %>% unique()
+
+plot_heatmap_glm(as.matrix(t_mat[selected_row,]), cluster_columns = FALSE,
+                 show_row_dend = FALSE)
+
+ggsave2(
+  filename = here::here("output", DOCNAME, paste0("Fig.de_tf.", cell_type, ".pdf")),
+  width = 1.75, height = 2.5
+)
+```
+
+
+#### Random 2
+
+```{r fig.width=1.75, fig.height=2.5}
+cell_type = "cd8.random2"
+anno_level = "level_3"
+
+# load
+de_tf.glm_patient = read_csv(here::here("output", paste0("DE_TF.", cell_type), "de_tf.glm_patient.csv"))
+
+# cluster 2 cellType
+df_c2c = readRDS(here::here("data", "c2c.t.rds")) %>%
+  filter(level_1 == "CD8") %>%
+  droplevels()
+
+# cell types
+d4p = de_tf.glm_patient %>%
+  #mutate(cluster = factor(cluster)) %>%
+  left_join(df_c2c, by = "cluster") %>%
+  dplyr::rename(cellType3 = level_3)
+
+# save
+d4p %>% 
+  dplyr::select(cellType3, gene, t, p, p_adj) %>% 
+  write_csv(file = here::here("output", DOCNAME, paste0(cell_type, ".de_tf.glm_patient.csv")))
+
+# t_mat
+t_mat = d4p %>%
+  pivot_wider(id_cols = "gene", names_from = "cellType3", values_from = "t") %>%
+  column_to_rownames("gene")
+t_mat = t_mat[,levels(d4p$cellType3)]
+
+# select rows to show
+selected_row = d4p %>%
+  filter(p_adj < 0.05) %>% # keep only those with p_adj < 0.05
+  group_by(cluster) %>%
+  top_n(3, wt = t) %>%
+  pull(gene) %>% unique()
+
+plot_heatmap_glm(as.matrix(t_mat[selected_row,]), cluster_columns = FALSE,
+                 show_row_dend = FALSE)
+
+ggsave2(
+  filename = here::here("output", DOCNAME, paste0("Fig.de_tf.", cell_type, ".pdf")),
+  width = 1.75, height = 2.5
+)
+```
+
+#### Random 3
+
+```{r fig.width=1.75, fig.height=2.5}
+cell_type = "cd8.random3"
+anno_level = "level_3"
+
+# load
+de_tf.glm_patient = read_csv(here::here("output", paste0("DE_TF.", cell_type), "de_tf.glm_patient.csv"))
+
+# cluster 2 cellType
+df_c2c = readRDS(here::here("data", "c2c.t.rds")) %>%
+  filter(level_1 == "CD8") %>%
+  droplevels()
+
+# cell types
+d4p = de_tf.glm_patient %>%
+  #mutate(cluster = factor(cluster)) %>%
+  left_join(df_c2c, by = "cluster") %>%
+  dplyr::rename(cellType3 = level_3)
+
+# save
+d4p %>% 
+  dplyr::select(cellType3, gene, t, p, p_adj) %>% 
+  write_csv(file = here::here("output", DOCNAME, paste0(cell_type, ".de_tf.glm_patient.csv")))
+
+# t_mat
+t_mat = d4p %>%
+  pivot_wider(id_cols = "gene", names_from = "cellType3", values_from = "t") %>%
+  column_to_rownames("gene")
+t_mat = t_mat[,levels(d4p$cellType3)]
+
+# select rows to show
+selected_row = d4p %>%
+  filter(p_adj < 0.05) %>% # keep only those with p_adj < 0.05
+  group_by(cluster) %>%
+  top_n(3, wt = t) %>%
+  pull(gene) %>% unique()
+
+plot_heatmap_glm(as.matrix(t_mat[selected_row,]), cluster_columns = FALSE,
+                 show_row_dend = FALSE)
+
+ggsave2(
+  filename = here::here("output", DOCNAME, paste0("Fig.de_tf.", cell_type, ".pdf")),
+  width = 1.75, height = 2.5
+)
+```
+
+
+### CD4 T {.tabset}
+
+#### Random 1
+
+```{r fig.width=1.75, fig.height=2.5}
+cell_type = "cd4.random1"
+anno_level = "level_3"
+
+# load
+de_tf.glm_patient = read_csv(here::here("output", paste0("DE_TF.", cell_type), "de_tf.glm_patient.csv"))
+
+# cluster 2 cellType
+df_c2c = readRDS(here::here("data", "c2c.t.rds")) %>%
+  filter(level_1 == "CD4") %>%
+  droplevels()
+
+# cell types
+d4p = de_tf.glm_patient %>%
+  #mutate(cluster = factor(cluster)) %>%
+  left_join(df_c2c, by = "cluster") %>%
+  dplyr::rename(cellType3 = level_3)
+
+# save
+d4p %>% 
+  dplyr::select(cellType3, gene, t, p, p_adj) %>% 
+  write_csv(file = here::here("output", DOCNAME, paste0(cell_type, ".de_tf.glm_patient.csv")))
+
+# t_mat
+t_mat = d4p %>%
+  pivot_wider(id_cols = "gene", names_from = "cellType3", values_from = "t") %>%
+  column_to_rownames("gene")
+t_mat = t_mat[,levels(d4p$cellType3)]
+
+# select rows to show
+selected_row = d4p %>%
+  filter(p_adj < 0.05) %>% # keep only those with p_adj < 0.05
+  group_by(cluster) %>%
+  top_n(3, wt = t) %>%
+  pull(gene) %>% unique()
+
+plot_heatmap_glm(as.matrix(t_mat[selected_row,]), cluster_columns = FALSE,
+                 show_row_dend = FALSE)
+
+ggsave2(
+  filename = here::here("output", DOCNAME, paste0("Fig.de_tf.", cell_type, ".pdf")),
+  width = 1.75, height = 2.5
+)
+```
+
+#### Random 2
+
+```{r fig.width=1.75, fig.height=2.5}
+cell_type = "cd4.random2"
+anno_level = "level_3"
+
+# load
+de_tf.glm_patient = read_csv(here::here("output", paste0("DE_TF.", cell_type), "de_tf.glm_patient.csv"))
+
+# cluster 2 cellType
+df_c2c = readRDS(here::here("data", "c2c.t.rds")) %>%
+  filter(level_1 == "CD4") %>%
+  droplevels()
+
+# cell types
+d4p = de_tf.glm_patient %>%
+  #mutate(cluster = factor(cluster)) %>%
+  left_join(df_c2c, by = "cluster") %>%
+  dplyr::rename(cellType3 = level_3)
+
+# save
+d4p %>% 
+  dplyr::select(cellType3, gene, t, p, p_adj) %>% 
+  write_csv(file = here::here("output", DOCNAME, paste0(cell_type, ".de_tf.glm_patient.csv")))
+
+# t_mat
+t_mat = d4p %>%
+  pivot_wider(id_cols = "gene", names_from = "cellType3", values_from = "t") %>%
+  column_to_rownames("gene")
+t_mat = t_mat[,levels(d4p$cellType3)]
+
+# select rows to show
+selected_row = d4p %>%
+  filter(p_adj < 0.05) %>% # keep only those with p_adj < 0.05
+  group_by(cluster) %>%
+  top_n(3, wt = t) %>%
+  pull(gene) %>% unique()
+
+plot_heatmap_glm(as.matrix(t_mat[selected_row,]), cluster_columns = FALSE,
+                 show_row_dend = FALSE)
+
+ggsave2(
+  filename = here::here("output", DOCNAME, paste0("Fig.de_tf.", cell_type, ".pdf")),
+  width = 1.75, height = 2.5
+)
+```
+
+#### Random 3
+
+```{r fig.width=1.75, fig.height=2.5}
+cell_type = "cd4.random3"
+anno_level = "level_3"
+
+# load
+de_tf.glm_patient = read_csv(here::here("output", paste0("DE_TF.", cell_type), "de_tf.glm_patient.csv"))
+
+# cluster 2 cellType
+df_c2c = readRDS(here::here("data", "c2c.t.rds")) %>%
+  filter(level_1 == "CD4") %>%
+  droplevels()
+
+# cell types
+d4p = de_tf.glm_patient %>%
+  #mutate(cluster = factor(cluster)) %>%
+  left_join(df_c2c, by = "cluster") %>%
+  dplyr::rename(cellType3 = level_3)
+
+# save
+d4p %>% 
+  dplyr::select(cellType3, gene, t, p, p_adj) %>% 
+  write_csv(file = here::here("output", DOCNAME, paste0(cell_type, ".de_tf.glm_patient.csv")))
+
+# t_mat
+t_mat = d4p %>%
+  pivot_wider(id_cols = "gene", names_from = "cellType3", values_from = "t") %>%
+  column_to_rownames("gene")
+t_mat = t_mat[,levels(d4p$cellType3)]
+
+# select rows to show
+selected_row = d4p %>%
+  filter(p_adj < 0.05) %>% # keep only those with p_adj < 0.05
+  group_by(cluster) %>%
+  top_n(3, wt = t) %>%
+  pull(gene) %>% unique()
+
+plot_heatmap_glm(as.matrix(t_mat[selected_row,]), cluster_columns = FALSE,
+                 show_row_dend = FALSE)
+
+ggsave2(
+  filename = here::here("output", DOCNAME, paste0("Fig.de_tf.", cell_type, ".pdf")),
+  width = 1.75, height = 2.5
+)
+```
+
+### Treg
+
+```{r fig.width=1, fig.height=1.5}
+cell_type = "treg"
+anno_level = "level_3"
+
+# load
+de_tf.glm_patient = read_csv(here::here("output", paste0("DE_TF.", cell_type), "de_tf.glm_patient.csv"))
+
+# cluster 2 cellType
+df_c2c = readRDS(here::here("data", "c2c.t.rds")) %>%
+  filter(level_1 == "Treg") %>%
+  droplevels()
+
+# cell types
+d4p = de_tf.glm_patient %>%
+  #mutate(cluster = factor(cluster)) %>%
+  left_join(df_c2c, by = "cluster") %>%
+  dplyr::rename(cellType3 = level_3)
+
+# save
+d4p %>% 
+  dplyr::select(cellType3, gene, t, p, p_adj) %>% 
+  write_csv(file = here::here("output", DOCNAME, paste0(cell_type, ".de_tf.glm_patient.csv")))
+
+# t_mat
+t_mat = d4p %>%
+  pivot_wider(id_cols = "gene", names_from = "cellType3", values_from = "t") %>%
+  column_to_rownames("gene")
+t_mat = t_mat[,levels(d4p$cellType3)]
+
+# select rows to show
+selected_row = d4p %>%
+  filter(p_adj < 0.05) %>% # keep only those with p_adj < 0.05
+  group_by(cluster) %>%
+  top_n(5, wt = t) %>%
+  pull(gene) %>% unique()
+
+plot_heatmap_glm(as.matrix(t_mat[selected_row,]), cluster_columns = FALSE,
+                 show_row_dend = FALSE)
+
+ggsave2(
+  filename = here::here("output", DOCNAME, paste0("Fig.de_tf.", cell_type, ".pdf")),
+  width = 1, height = 1.5
+)
+```
+
+## Session info
+

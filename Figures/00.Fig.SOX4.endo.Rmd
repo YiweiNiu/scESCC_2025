@@ -1,0 +1,298 @@
+---
+title: "00.Fig.SOX4.endo"
+---
+
+```{r knitr, include = FALSE}
+DOCNAME <- "00.Fig.SOX4.endo"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = FALSE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+
+# patch
+library(patchwork)
+library(cowplot)
+my_theme <- theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+)
+geom.text.size <- 6 / (14 / 5)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+
+# color
+library(ggsci)
+
+# Seurat
+library(Seurat)
+
+# vis
+# library(scRNAtoolVis)
+```
+
+Load code
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+Load rds
+
+```{r load-rds, cache=FALSE}
+srat <- readRDS(here::here("output/04.rm_cells/seurat_endothelia.rds"))
+Idents(srat) <- "level_2"
+srat
+```
+
+## SOX4 in endo subtypes
+
+```{r fig.width=3, fig.height=2}
+VlnPlot(srat, features = "SOX4", pt.size = 0) +
+  scale_fill_manual(values = endo_level_2_color) +
+  labs(x = NULL, y = "Exp.") +
+  my_theme +
+  NoLegend() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.endo_level2_SOX4.pdf"),
+  height = 2, width = 3, device = cairo_pdf
+)
+```
+
+with Dot
+
+```{r fig.width=3, fig.height=2}
+VlnPlot(srat, features = "SOX4", pt.size = 0.01) +
+  scale_fill_manual(values = endo_level_2_color) +
+  labs(x = NULL, y = "Exp.") +
+  my_theme +
+  NoLegend() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.endo_level2_SOX4_withDot.pdf"),
+  height = 2, width = 3, device = cairo_pdf
+)
+```
+
+
+
+## SOX4 in diff. Origin2_n
+
+Pcv/immature/tip细胞SOX4在不同位置的表达情况 origin 2 提琴图
+
+```{r fig.width=2, fig.height=4}
+p1 <- VlnPlot(subset(srat, subset = level_1.5 == "pcv"),
+              features = "SOX4", group.by = "Origin2_n", pt.size = 0) +
+  scale_fill_manual(values = origin2_color_maps) +
+  labs(x = NULL, y = "Exp.", title = "pcv") +
+  my_theme +
+  NoLegend() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+p2 <- VlnPlot(subset(srat, subset = level_1.5 == "immature"),
+              features = "SOX4", group.by = "Origin2_n", pt.size = 0) +
+  scale_fill_manual(values = origin2_color_maps) +
+  labs(x = NULL, y = "Exp.", title = "immature") +
+  my_theme +
+  NoLegend() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+p3 <- VlnPlot(subset(srat, subset = level_1.5 == "tip cell"),
+              features = "SOX4", group.by = "Origin2_n", pt.size = 0) +
+  scale_fill_manual(values = origin2_color_maps) +
+  labs(x = NULL, y = "Exp.", title = "tip cell") +
+  my_theme +
+  NoLegend() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+p1/p2/p3
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.endo_Origin2_SOX4.pdf"),
+  height = 4, width = 2, device = cairo_pdf
+)
+```
+
+with Dot
+
+```{r fig.width=2, fig.height=4}
+p1 <- VlnPlot(subset(srat, subset = level_1.5 == "pcv"),
+              features = "SOX4", group.by = "Origin2_n", pt.size = 0.01) +
+  scale_fill_manual(values = origin2_color_maps) +
+  labs(x = NULL, y = "Exp.", title = "pcv") +
+  my_theme +
+  NoLegend() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+p2 <- VlnPlot(subset(srat, subset = level_1.5 == "immature"),
+              features = "SOX4", group.by = "Origin2_n", pt.size = 0.01) +
+  scale_fill_manual(values = origin2_color_maps) +
+  labs(x = NULL, y = "Exp.", title = "immature") +
+  my_theme +
+  NoLegend() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+p3 <- VlnPlot(subset(srat, subset = level_1.5 == "tip cell"),
+              features = "SOX4", group.by = "Origin2_n", pt.size = 0.01) +
+  scale_fill_manual(values = origin2_color_maps) +
+  labs(x = NULL, y = "Exp.", title = "tip cell") +
+  my_theme +
+  NoLegend() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+p1/p2/p3
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.endo_Origin2_SOX4_withDot.pdf"),
+  height = 4, width = 2, device = cairo_pdf
+)
+```
+
+
+
+## Cor. with selected signatures
+
+```{r fig.width=3, fig.height=3}
+srat_sub <- subset(srat, subset = level_1.5 %in% c("pcv", "immature", "tip cell"))
+
+gs_lst <- list(
+  # angiogenesis
+  angiogenesis = filter_features(srat, c("CCL3", "VEGFA", "SND1", "MTDH", "ITGA5", "TNF", "CXCL3", "ANXA3", "HMGB1", "HIF1A", "SEMA4D", "LRG1", "CHIL1")),
+  # leukocyte cell-cell adhesion
+  leu_adhesion = filter_features(srat, GOfuncR::get_anno_genes("GO:0007159") %>% pull(gene)),
+  # Endothelia Cell Activation
+  enco_act = filter_features(srat, c("SELE", "SELP", "ICAM1", "ICAM2", "VCAM1")),
+  # leukocyte chemotaxis
+  leu_chemotaxis = filter_features(srat, GOfuncR::get_anno_genes("GO:0030595") %>% pull(gene)),
+  # HALLMARK_HYPOXIA
+  hypoxia = filter_features(srat, read.table(here::here("data/HALLMARK_HYPOXIA.txt")) %>% pull(V1))
+)
+
+# get score
+srat_sub <- AddModuleScore(srat_sub, features = gs_lst)
+gs_score <- srat_sub@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  dplyr::select(barcode, starts_with("Cluster")) %>% 
+  column_to_rownames("barcode")
+colnames(gs_score) <- names(gs_lst)
+x <- FetchData(srat_sub, slot = "data", vars = "SOX4")
+
+# plot
+y <- cor(x$SOX4, gs_score)
+d4p <- as.data.frame(t(y)) %>% 
+  rownames_to_column("x") %>%
+  dplyr::rename(y = V1)
+
+d4p %>% 
+  ggplot(aes(x = reorder(x, -y), y = y)) +
+  geom_point(size = 3) +
+  geom_segment(aes(x=x, 
+                   xend=x, 
+                   y=0, 
+                   yend=y)) +
+  labs(x = NULL, y = "cor") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle=65, hjust=1))
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.endo_pcv_im_tip_SOX4_gs_cor.pdf"),
+  height = 3, width = 3, device = cairo_pdf
+)
+```
+
+## LEC with aging
+
+```{r fig.width=2.5, fig.height=2}
+library(limma)
+tab <- getGeneKEGGLinks(species="hsa")
+tab$Symbol <- mapIds(org.Hs.eg.db, tab$GeneID,
+                       column="SYMBOL", keytype="ENTREZID")
+
+gs_lst <- list(
+  # Aging 
+  aging = tab %>% filter(PathwayID == "path:hsa04213") %>% pull(Symbol)
+)
+
+srat_sub <- subset(srat, subset = level_1.5 %in% c("LEC"))
+
+# get score
+srat_sub <- AddModuleScore(srat_sub, features = gs_lst)
+gs_score <- srat_sub@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  dplyr::select(barcode, starts_with("Cluster")) %>% 
+  column_to_rownames("barcode")
+colnames(gs_score) <- names(gs_lst)
+x <- FetchData(srat_sub, slot = "data", vars = "SOX4")
+
+# plot
+d4p <- cbind(gs_score, x)
+
+d4p %>% 
+  ggplot(aes(x = aging, y = SOX4)) +
+  geom_point_rast(size = 1) +
+  geom_smooth(method=lm, se=FALSE) +
+  stat_cor(method = "pearson") +
+  my_theme
+
+# save
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.endo_LEC_SOX4_aging_cor.pdf"),
+  height = 2, width = 2.5, device = cairo_pdf
+)
+```
+
+
+
+## Session info
+

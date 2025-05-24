@@ -1,0 +1,193 @@
+---
+title: "00.Fig.Td-type.241023"
+---
+
+
+```{r knitr, include = FALSE}
+DOCNAME <- "00.Fig.Td-type"
+dir.create(here::here("output", DOCNAME), showWarnings = FALSE)
+
+NOW <- Sys.time()
+# Time chunks during knitting
+knitr::knit_hooks$set(timeit = function(before) {
+  if (before) {
+    print(paste("Start:", Sys.time()))
+    NOW <<- Sys.time()
+  } else {
+    print(paste("Stop:", Sys.time()))
+    print(Sys.time() - NOW)
+  }
+})
+
+knitr::opts_chunk$set(
+  autodep        = TRUE,
+  cache          = FALSE,
+  cache.path     = paste0("cache/", DOCNAME, "/"),
+  cache.lazy     = FALSE,
+  cache.comments = FALSE,
+  echo           = TRUE,
+  error          = FALSE,
+  fig.align      = "center",
+  fig.width      = 10,
+  fig.height     = 8,
+  message        = FALSE,
+  warning        = FALSE,
+  timeit         = TRUE
+)
+```
+
+## Setup
+
+Load packages
+
+```{r libaries, cache = FALSE, message=FALSE, warning=FALSE}
+# Tidyverse
+library(tidyverse)
+
+# Plotting
+library(scales)
+library(EnvStats)
+library(ggplotify)
+library(ggcorrplot)
+library(corrplot)
+library(ggpubr)
+library(ggrepel)
+library(ggrastr)
+
+# patch
+library(patchwork)
+library(cowplot)
+my_theme <- theme_cowplot(
+  font_size = 6, # Overall font size
+  rel_small = 6 / 6, # axis tick labels
+  rel_tiny = 6 / 6, # caption
+  rel_large = 6 / 6 # title
+)
+geom.text.size <- 6 / (14 / 5)
+
+# heatmap
+library(pheatmap)
+library(ComplexHeatmap)
+
+# color
+library(ggsci)
+
+# Seurat
+library(Seurat)
+```
+
+Load code
+
+```{r source, cache = FALSE}
+source(here::here("code/preprocess.R"))
+source(here::here("code/glm.R"))
+source(here::here("code/color.R"))
+source(here::here("code/plot.R"))
+```
+
+## Load data
+
+Cluster to celltypes
+
+```{r message=FALSE, warning=FALSE}
+df_c2c <- read_tsv(here::here("data/cluster_2_celltype.ALL.txt"))
+```
+
+## Functions
+
+Common function
+
+```{r}
+neat_data <- function(tissue_origin = NULL, p_mat = NULL, t = NULL) {
+  # percent
+  d4p <- tissue_origin %>%
+    group_by(cellType3, NN_tissue) %>%
+    summarise(n = n()) %>%
+    mutate(Percent = n / sum(n) * 100) %>%
+    unite(ID, c("cellType3", "NN_tissue"), sep = ":")
+
+  # p value
+  df_p <- p_mat %>%
+    as.data.frame.matrix() %>%
+    rownames_to_column("cellType3") %>%
+    pivot_longer(
+      cols = -c("cellType3"),
+      values_to = "p"
+    ) %>%
+    unite(ID, c("cellType3", "name"), sep = ":") %>%
+    mutate(p.adj = p.adjust(p, method = "BH"))
+
+  # td-types
+  d4p %>%
+    left_join(df_p, by = "ID") %>%
+    separate(ID, c("cellType3", "NN_tissue"), sep = ":") %>% 
+    mutate(Tissue = t) %>% 
+    dplyr::select(Tissue, everything())
+}
+
+get_td_type <- function(df_in=NULL) {
+  df_in %>%
+    filter(NN_tissue == "Tumor", Percent >= 70, p.adj < 0.01)
+}
+```
+
+## All Td-types
+
+Get Td-type cells
+
+```{r}
+t <- "Tumor"
+p_mat <- readRDS(here::here("output", "exp_similarity.cross_tissue.Origin2", paste0(t, ".p_mat.rds")))
+tissue_origin <- readRDS(here::here("output", "exp_similarity.cross_tissue.Origin2", paste0(t, ".tissue_origin.rds")))
+td_types <- get_td_type(neat_data(tissue_origin, p_mat, t)) %>%
+    pull(cellType3)
+td_types <- df_c2c %>%
+  filter(level_3 %in% td_types)
+
+# save
+saveRDS(td_types, file = here::here("output", DOCNAME, "td_types.rds"))
+td_types %>% 
+  write_csv(here::here("output", DOCNAME, "td_types.csv"))
+
+td_types %>%
+  DT::datatable()
+```
+
+## Plot {.tabset}
+
+without labels
+
+```{r fig.width=8, fig.height=7}
+Origin2 <- c("Tumor")
+
+df_lst <- lapply(Origin2, function(t) {
+  p_mat <- readRDS(here::here("output", "exp_similarity.cross_tissue.Origin2", paste0(t, ".p_mat.rds")))
+  tissue_origin <- readRDS(here::here("output", "exp_similarity.cross_tissue.Origin2", paste0(t, ".tissue_origin.rds")))
+  neat_data(tissue_origin, p_mat, t)
+})
+
+# only plot the similarity to Tumor
+d4p <- do.call(rbind, df_lst) %>%
+  filter(NN_tissue == "Tumor")
+
+# save
+d4p %>% 
+  write_csv(here::here("output", DOCNAME, "Fig.Td-type-identification.csv"))
+
+d4p %>% 
+  ggplot(aes(x = -log10(p.adj + 10^-4), y = Percent, color = Tissue)) +
+  geom_jitter(position = position_jitter(width = 0.2, height = 0.2),
+              size = 3) +
+  geom_hline(yintercept = 70, linetype = "dashed") +
+  geom_vline(xintercept = -log10(0.01), linetype = "dashed") +
+  scale_color_manual(values = origin2_color_maps) +
+  xlim(NA, 5) +
+  my_theme
+
+ggsave2(
+  filename = here::here("output", DOCNAME, "Fig.Td-type-identification.pdf"),
+  width = 8, height = 7
+)
+```
+
+
